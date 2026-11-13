@@ -5,6 +5,35 @@ import UIKit
 
 @MainActor
 final class LibraryStoreTests: XCTestCase {
+    func testMovingAllPagesAndRestoringTheSemester() throws {
+        let store = LibraryStore(root:try temporaryRoot())
+        try store.addFolder("Семестр")
+        let src = try store.create(title:"Черновик",paper:.blank,color:"teal",premium:false)
+        let dst = try store.create(title:"Чистовик",paper:.grid,color:"clay",premium:false)
+        let a = try XCTUnwrap(store.notebook(src)?.pages.first?.id)
+        let b = try store.insertPage(in:src,after:a,configuration:PaperConfiguration())
+        let anchor = try XCTUnwrap(store.notebook(dst)?.pages.first?.id)
+        let image = UIGraphicsImageRenderer(size:CGSize(width:8,height:8)).pngData { ctx in
+            UIColor.red.setFill(); ctx.fill(CGRect(x:0,y:0,width:8,height:8))
+        }
+        let asset = try store.storeAsset(image,extension:"png")
+        store.updatePage(src,a) { $0.heading = "Условие"; $0.images = [PageImage(asset:asset)] }
+        store.updatePage(src,b) { $0.heading = "Решение"; $0.cards = [ReviewCard(question:"Вопрос",answer:"Ответ")] }
+        let folder = try XCTUnwrap(store.library.folders.first?.id)
+        store.update(dst) { $0.folderID = folder }
+        try store.transferPages([b,a],from:src,to:dst,before:anchor,move:true)
+        XCTAssertEqual(store.notebook(src)?.pages.count,1)
+        XCTAssertEqual(store.notebook(dst)?.pages.compactMap(\.heading),["Условие","Решение"])
+        let copy = try store.exportLibrary()
+        defer { try? FileManager.default.removeItem(at:copy) }
+        let root = try temporaryRoot()
+        let restored = LibraryStore(root:root)
+        try restored.restoreFullBackup(copy)
+        let reopened = LibraryStore(root:root)
+        XCTAssertEqual(reopened.library,store.library)
+        XCTAssertEqual(try reopened.readAsset(asset),image)
+        XCTAssertThrowsError(try reopened.restoreFullBackup(copy))
+    }
     private func temporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
