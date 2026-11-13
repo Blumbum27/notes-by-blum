@@ -15,6 +15,8 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var hasUnsavedChanges = false
     private let root: URL
     private var syncRunning = false
+    @Published var backupStatus = ""
+    private var lastBackupDigest: SHA256.Digest?
     var editingNotebookID: UUID?
     @Published private(set) var syncStatus = ""
 
@@ -24,6 +26,78 @@ final class LibraryStore: ObservableObject {
         let bookmark = try folder.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
         try bookmark.write(to: root.appendingPathComponent("sync-folder.bookmark"), options: .atomic)
         syncStatus = "Папка подключена"
+    }
+
+    private struct FullBackup: Codable {
+        let version: Int
+        let library: Library
+        let assets: [String: Data]
+    }
+    private func fullBackupData() throws -> Data {
+        guard !loadFailed else { throw NoteError.invalidFile }
+        try Self.validate(library)
+        let names = library.notebooks.reduce(into: Set<String>()) { $0.formUnion(referencedAssets($1)) }
+        var assets: [String: Data] = [:]
+        for name in names { assets[name] = try readAsset(name) }
+        return try encoder.encode(FullBackup(version: 1, library: library, assets: assets))
+    }
+    func exportLibrary() throws -> URL {
+        let url = try exportURL(extension: "blumlibrary")
+        try fullBackupData().write(to: url, options: .atomic)
+        return url
+    }
+    func restoreFullBackup(_ url: URL) throws {
+        guard !loadFailed, !isBusy, library.notebooks.isEmpty, library.folders.isEmpty,
+              (library.inkElements ?? []).isEmpty else {
+            throw NSError(domain:"Library",code:1,userInfo:[NSLocalizedDescriptionKey:"Полную копию можно восстановить в пустую библиотеку."])
+        }
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        let data = try Data(contentsOf:url,options:.mappedIfSafe)
+        let backup = try JSONDecoder().decode(FullBackup.self,from:data)
+        guard backup.version == 1 else { throw NoteError.newerVersion }
+        try Self.validate(backup.library)
+        let names = backup.library.notebooks.reduce(into:Set<String>()) { $0.formUnion(referencedAssets($1)) }
+        guard Set(backup.assets.keys) == names else { throw NoteError.invalidFile }
+        var created: [URL] = []
+        do {
+            for (name, bytes) in backup.assets {
+                let target = try assetURL(name)
+                if name.lowercased().hasSuffix(".pdf") {
+                    guard let doc = PDFDocument(data:bytes), !doc.isLocked else { throw NoteError.invalidFile }
+                    for note in backup.library.notebooks {
+                        for page in note.pages where page.pdfAsset == name {
+                            guard let index = page.pdfPage,index < doc.pageCount else { throw NoteError.invalidFile }
+                        }
+                    }
+                } else { try ImageLoader.validate(bytes) }
+                if manager.fileExists(atPath:target.path) { guard try readAsset(name) == bytes else { throw NoteError.invalidFile } }
+                else { try bytes.write(to:target,options:.atomic); created.append(target) }
+            }
+            try commit(backup.library)
+        } catch { for file in created { try? manager.removeItem(at:file) }; throw error }
+    }
+    func chooseBackupFolder(_ url: URL) throws {
+        guard url.startAccessingSecurityScopedResource() else { throw CocoaError(.fileReadNoPermission) }
+        defer { url.stopAccessingSecurityScopedResource() }
+        try url.bookmarkData(options:.minimalBookmark,includingResourceValuesForKeys:nil,relativeTo:nil)
+            .write(to:root.appendingPathComponent("backup-folder.bookmark"),options:.atomic)
+        lastBackupDigest = nil
+        performAutoBackup()
+    }
+    func performAutoBackup() {
+        let marker = root.appendingPathComponent("backup-folder.bookmark")
+        guard manager.fileExists(atPath:marker.path), !loadFailed, !isBusy, !library.notebooks.isEmpty,
+              flush(), lastBackupDigest != lastKnownDigest else { return }
+        do {
+            var stale = false
+            let folder = try URL(resolvingBookmarkData:Data(contentsOf:marker),options:[],relativeTo:nil,bookmarkDataIsStale:&stale)
+            guard folder.startAccessingSecurityScopedResource() else { throw CocoaError(.fileReadNoPermission) }
+            defer { folder.stopAccessingSecurityScopedResource() }
+            let destination = folder.appendingPathComponent("notes-by-Blum-" + Date.now.formatted(.iso8601.year().month().day()) + ".blumlibrary")
+            try fullBackupData().write(to:destination,options:.atomic)
+            lastBackupDigest = lastKnownDigest; backupStatus = "Копия сохранена " + Date().formatted()
+        } catch { backupStatus = "Ошибка резервной копии: " + error.localizedDescription }
     }
 
     func syncPages() async {
@@ -204,6 +278,9 @@ final class LibraryStore: ObservableObject {
               !note.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               Set(note.pages.map(\.id)).count == note.pages.count else { throw NoteError.invalidFile }
         for page in note.pages {
+            let cards = page.cards ?? []
+            guard cards.count <= 1000, Set(cards.map(\.id)).count == cards.count,
+                  cards.allSatisfy({ !$0.question.isEmpty && !$0.answer.isEmpty && $0.question.count <= 8000 && $0.answer.count <= 16000 && (0...120).contains($0.intervalDays) }) else { throw NoteError.invalidFile }
             guard (page.heading?.count ?? 0) <= 160, (page.studyCovers?.count ?? 0) <= 500,
                   (page.studyCovers ?? []).allSatisfy({ !$0.rect.isEmpty && CGRect(origin: .zero, size: page.size).contains($0.rect) }) else { throw NoteError.invalidFile }
             if let spacing = page.paperSpacing { guard spacing.isFinite, (16...48).contains(spacing) else { throw NoteError.invalidFile } }
@@ -465,6 +542,19 @@ final class LibraryStore: ObservableObject {
                 let data = try Data(contentsOf: url, options: .mappedIfSafe)
                 guard data.count <= 100_000_000 else { throw NoteError.invalidFile }
                 try importArchive(data)
+                return
+            }
+            if ["jpg","jpeg","png","heic","heif","tiff","webp"].contains(url.pathExtension.lowercased()) {
+                let image = try ImageLoader.prepareForStorage(Data(contentsOf:url,options:.mappedIfSafe))
+                let asset = try storeAsset(image.data,extension:image.suffix)
+                do {
+                    var page = NotePage(paper:.blank)
+                    let rect = try ImageLoader.fittedRect(image:image.size,page:page.size)
+                    page.images = [PageImage(asset:asset,x:rect.minX,y:rect.minY,width:rect.width,height:rect.height)]
+                    var next = library
+                    next.notebooks.insert(Notebook(title:url.deletingPathExtension().lastPathComponent,pages:[page]),at:0)
+                    try commit(next)
+                } catch { if let file = try? assetURL(asset) { try? manager.removeItem(at:file) }; throw error }
                 return
             }
             guard let pdf = PDFDocument(url: url), !pdf.isLocked, (1...500).contains(pdf.pageCount),

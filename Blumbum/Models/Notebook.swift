@@ -72,12 +72,21 @@ struct NotePage: Identifiable, Codable, Equatable, Sendable {
     var paperMargin: Double? = nil
     var heading: String? = nil
     var studyCovers: [StudyCover]? = nil
+    var cards: [ReviewCard]? = nil
     var size: CGSize { CGSize(width: width, height: height) }
 }
 
 struct StudyCover: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var rect: CGRect
+}
+
+struct ReviewCard: Identifiable, Codable, Equatable, Sendable {
+    var id = UUID()
+    var question: String
+    var answer: String
+    var intervalDays = 0
+    var due = Date.distantPast
 }
 
 struct Notebook: Identifiable, Codable, Equatable, Sendable {

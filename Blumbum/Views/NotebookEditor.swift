@@ -17,6 +17,8 @@ struct NotebookEditor: View {
     @State private var pageBatch = false
     @State private var sourcePDF = false
     @State private var workspace = false
+    @State private var studyCards = false
+    @State private var clockOpen = false
     @State private var canvasRevision = UUID()
     @State private var previousPage: UUID?
     @State private var showObjects = false
@@ -165,6 +167,10 @@ struct NotebookEditor: View {
         .sheet(isPresented: $workspace, onDismiss: { canvasRevision = UUID(); session.resume() }) {
             if let page { SheetWorkspace(notebookID: notebookID, original: page, readOnly: session.readOnly) }
         }
+        .sheet(isPresented: $studyCards, onDismiss: { session.resume() }) {
+            if let page { StudySession(notebookID: notebookID, pageID: page.id) }
+        }
+        .sheet(isPresented: $clockOpen, onDismiss: { session.resume() }) { SessionClock(notebook:notebookID) }
         .sheet(isPresented: $sourcePDF, onDismiss: { session.resume() }) {
             if let page, let asset = page.pdfAsset, let url = try? store.assetURL(asset) {
                 SourcePDFReader(url: url, index: page.pdfPage ?? 0) { index in
@@ -208,7 +214,10 @@ struct NotebookEditor: View {
     private var notebookActionsMenu: some View {
         Menu {
             Button("Найти на страницах", systemImage: "magnifyingglass") { session.prepareForModal(); searchingPages = true }
+                .keyboardShortcut("f", modifiers:.command)
+            Button("Таймер и секундомер", systemImage:"timer") { session.prepareForModal(); clockOpen = true }
             Button("Выделение, объекты и самопроверка", systemImage: "lasso") { session.prepareForModal(); workspace = true }
+            Button("Учебные карточки", systemImage: "rectangle.on.rectangle") { session.prepareForModal(); studyCards = true }.disabled(session.readOnly)
             Button("Линейка", systemImage: "ruler") { session.canvas?.isRulerActive.toggle() }.disabled(session.readOnly)
             if page?.pdfAsset != nil {
                 Button("Читать исходный PDF", systemImage: "book") { session.prepareForModal(); sourcePDF = true }
@@ -356,6 +365,9 @@ struct PageOrganizer: View {
     @Binding var selectedPage: UUID?
     var readOnly = false
     @State private var bookmarkedOnly = false
+    @State private var headingOnly = false
+    @State private var headingPage: UUID?
+    @State private var headingDraft = ""
     @State private var deleting: UUID?
     private var note: Notebook? { store.notebook(notebookID) }
 
@@ -363,18 +375,20 @@ struct PageOrganizer: View {
         NavigationStack {
             List {
                 Toggle("Только закладки", isOn: $bookmarkedOnly)
+                Toggle("Оглавление по темам", isOn:$headingOnly)
                 if let note {
-                    ForEach(Array(note.pages.enumerated()).filter { !bookmarkedOnly || $0.element.bookmarked }, id: \.element.id) { index, page in
+                    ForEach(Array(note.pages.enumerated()).filter { (!bookmarkedOnly || $0.element.bookmarked) && (!headingOnly || $0.element.heading != nil) }, id: \.element.id) { index, page in
                         Button { selectedPage = page.id; dismiss() } label: {
                             HStack {
                                 PageThumbnail(page: page)
-                                Text("Страница \(index + 1)").foregroundStyle(.primary)
+                                Text(page.heading.map { "\(index + 1). " + $0 } ?? "Страница \(index + 1)").foregroundStyle(.primary)
                                 Spacer()
                                 if page.bookmarked { Image(systemName: "bookmark.fill") }
                                 if selectedPage == page.id { Image(systemName: "checkmark.circle.fill") }
                             }.padding(.vertical, 8)
                         }
                         .contextMenu {
+                            Button("Название темы") { headingDraft = page.heading ?? ""; headingPage = page.id }.disabled(readOnly)
                             Button("Дублировать") {
                                 var copy = page; copy.id = UUID()
                                 store.update(notebookID) { $0.pages.insert(copy, at: index + 1) }
@@ -383,12 +397,23 @@ struct PageOrganizer: View {
                             Button("Удалить страницу", role: .destructive) { deleting = page.id }.disabled(readOnly || note.pages.count <= 1)
                         }
                     }.onMove { source, destination in
-                        guard !bookmarkedOnly, !readOnly else { return }
+                        guard !bookmarkedOnly, !headingOnly, !readOnly else { return }
                         store.update(notebookID) { $0.pages.move(fromOffsets: source, toOffset: destination) }
-                    }.moveDisabled(bookmarkedOnly || readOnly)
+                    }.moveDisabled(bookmarkedOnly || headingOnly || readOnly)
                 }
             }
             .navigationTitle("Страницы")
+            .alert("Название в оглавлении",isPresented:Binding(get:{ headingPage != nil },set:{ if !$0 { headingPage = nil } })) {
+                TextField("Тема",text:$headingDraft)
+                Button("Сохранить") {
+                    if let id = headingPage {
+                        let value = headingDraft.trimmingCharacters(in:.whitespacesAndNewlines)
+                        store.updatePage(notebookID,id) { $0.heading = value.isEmpty ? nil : String(value.prefix(160)) }
+                    }
+                    headingPage = nil
+                }
+                Button("Отмена",role:.cancel) { headingPage = nil }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) { EditButton().disabled(bookmarkedOnly || readOnly) }
                 ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } }

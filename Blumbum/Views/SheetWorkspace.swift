@@ -22,6 +22,8 @@ struct SheetWorkspace: View {
     @State private var editing: UUID?
     @State private var issue: String?
     @State private var recognized = false
+    @State private var elementName = ""
+    @State private var namingElement = false
     @State private var share: SharedFile?
 
     init(notebookID: UUID, original: NotePage, readOnly: Bool) {
@@ -78,6 +80,7 @@ struct SheetWorkspace: View {
                                 if let text = draft.texts.first(where: { texts.contains($0.id) }) { editText = text.text; editing = text.id }
                             }.disabled(texts.count != 1)
                             Button("Распознать рукопись") { recognize() }.disabled(strokes.isEmpty)
+                            Button("На полку элементов") { elementName = ""; namingElement = true }.disabled(strokes.isEmpty)
                         }.disabled(strokes.isEmpty && texts.isEmpty && pictures.isEmpty)
                     }
                 }
@@ -89,6 +92,16 @@ struct SheetWorkspace: View {
                     ToolbarItem(placement: .confirmationAction) { Button("Сохранить") { save() }.disabled(readOnly || draft == original) }
                 }
                 .task(id: draft) { render() }
+                .alert("Сохранить выделенные штрихи",isPresented:$namingElement) {
+                    TextField("Название",text:$elementName)
+                    Button("Сохранить") {
+                        do {
+                            let selected = ink.strokes.enumerated().filter { strokes.contains($0.offset) }.map(\.element)
+                            try store.saveInkElement(title:elementName,drawing:PKDrawing(strokes:selected).dataRepresentation())
+                        } catch { issue = error.localizedDescription }
+                    }
+                    Button("Отмена",role:.cancel) {}
+                }
                 .alert("Текст", isPresented: Binding(get: { editing != nil }, set: { if !$0 { editing = nil } })) {
                     TextField("Текст", text: $editText)
                     Button("Применить") { if let i = draft.texts.firstIndex(where: { $0.id == editing }) { draft.texts[i].text = editText }; editing = nil }

@@ -14,6 +14,8 @@ struct LibraryView: View {
     @State private var newNotebook = false
     @State private var importing = false
     @State private var selectingSyncFolder = false
+    @State private var backupFolder = false
+    @State private var backupRestore = false
     @State private var searchingPages = false
     @AppStorage("library.sort") private var sort = "recent"
     @State private var confirmRecovery = false
@@ -81,6 +83,14 @@ struct LibraryView: View {
                 Section {
                     Label("Корзина", systemImage: "trash").tag("trash")
                     Button("Подключить папку iCloud Drive", systemImage: "icloud") { selectingSyncFolder = true }
+                    Menu("Резервные копии", systemImage: "externaldrive") {
+                        Button("Экспорт всей библиотеки") {
+                            do { shared = try SharedFile(url:store.exportLibrary()) } catch { store.error = error.localizedDescription }
+                        }
+                        Button("Папка автоматических копий") { backupFolder = true }
+                        Button("Восстановить полную копию") { backupRestore = true }
+                    }
+                    if !store.backupStatus.isEmpty { Text(store.backupStatus).font(.caption) }
                     if !store.syncStatus.isEmpty { Text(store.syncStatus).font(.caption) }
                     Button { showPlus = true } label: {
                         Label(subscription.hasPremium ? "notes by Blum Plus · активен" : "notes by Blum Plus", systemImage: "sparkles")
@@ -158,6 +168,12 @@ struct LibraryView: View {
             NewNotebookView { id in path.append(id) }
         }
         .sheet(isPresented: $showPlus) { PlusView() }
+        .fileImporter(isPresented:$backupFolder,allowedContentTypes:[.folder]) { result in
+            do { try store.chooseBackupFolder(result.get()) } catch { store.error = error.localizedDescription }
+        }
+        .fileImporter(isPresented:$backupRestore,allowedContentTypes:[UTType(filenameExtension:"blumlibrary") ?? .data]) { result in
+            do { try store.restoreFullBackup(result.get()) } catch { store.error = error.localizedDescription }
+        }
         .sheet(isPresented: $searchingPages) {
             NoteSearch(notebookID: nil) { id, page in
                 UserDefaults.standard.set(page.uuidString, forKey: "lastPage.\(id.uuidString)")
@@ -170,7 +186,7 @@ struct LibraryView: View {
         }
         .sheet(item: $editing) { note in NotebookSettingsView(note: note) }
         .sheet(item: $shared) { ShareSheet(url: $0.url) }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .listnote]) { result in
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .listnote, .jpeg, .png, .heic, .tiff, .webP]) { result in
             switch result {
             case .success(let url): Task { await store.importDocument(url, premium: subscription.hasPremium) }
             case .failure(let error): store.error = error.localizedDescription

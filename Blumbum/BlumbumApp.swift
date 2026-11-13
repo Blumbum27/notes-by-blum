@@ -17,6 +17,7 @@ struct BlumbumApp: App {
                     guard scenePhase == .active else { return }
                     while !Task.isCancelled {
                         await store.syncPages()
+                        store.performAutoBackup()
                         do { try await Task.sleep(for: .seconds(60)) } catch { return }
                     }
                 }
