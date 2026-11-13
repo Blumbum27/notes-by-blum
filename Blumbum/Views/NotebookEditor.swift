@@ -41,6 +41,7 @@ struct NotebookEditor: View {
             if let note, let page {
                 HStack(spacing: 16) {
                     Button { session.prepareForModal(); showPages = true } label: { Label("\(pageIndex + 1) / \(note.pages.count)", systemImage: "square.grid.2x2") }
+                        .accessibilityLabel("Страница \(pageIndex + 1) / \(note.pages.count)")
                         .accessibilityIdentifier("pages.open")
                     Spacer(minLength: 0)
                     Button { navigate(-1) } label: { Image(systemName: "chevron.left") }.disabled(pageIndex == 0).accessibilityLabel("Предыдущая страница")
