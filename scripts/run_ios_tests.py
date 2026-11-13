@@ -13,12 +13,15 @@ def main():
     inventory = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json'], text=True))
     runtimes = sorted((key for key in inventory['devices'] if 'iOS' in key), key=lambda key: tuple(map(int, re.findall(r'\d+', key))), reverse=True)
     destinations = []
-    for family in ['iPhone', 'iPad']:
+    family_filter = os.environ.get('SIMULATOR_FAMILY')
+    for family in ([family_filter] if family_filter else ['iPhone', 'iPad']):
         found = next((device for runtime in runtimes for device in inventory['devices'][runtime]
                       if device.get('isAvailable') and family in device['name']), None)
         if found is None:
             raise SystemExit(f'No available {family} simulator. Install an iOS runtime and create the device in Xcode.')
         destinations += ['-destination', f'platform=iOS Simulator,id={found["udid"]}']
+        if family_filter:
+            subprocess.run(['xcrun', 'simctl', 'bootstatus', found['udid'], '-b'], check=True, timeout=600)
         print(f'Testing {found["name"]}', flush=True)
     results = ROOT / 'build/TestResults.xcresult'
     index = 1

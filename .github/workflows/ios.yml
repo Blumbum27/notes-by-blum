@@ -8,6 +8,12 @@ permissions:
   contents: read
 jobs:
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        family: [iPhone, iPad]
+    env:
+      SIMULATOR_FAMILY: ${{ matrix.family }}
     runs-on: macos-15-intel
     timeout-minutes: 45
     steps:
@@ -32,6 +38,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-test-results
+          name: ios-test-results-${{ matrix.family }}
           path: build/*.xcresult
           if-no-files-found: ignore
