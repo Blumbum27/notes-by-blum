@@ -1,4 +1,18 @@
 import SwiftUI
+import PencilKit
+
+private let penTypes: [PKInk.InkType] = [.pen,.pencil,.marker,.monoline,.fountainPen,.watercolor,.crayon]
+
+private struct SavedPen: Codable,Identifiable {
+    var id = UUID()
+    var title: String
+    var type: Int
+    var red: Double
+    var green: Double
+    var blue: Double
+    var alpha: Double
+    var width: Double
+}
 
 struct WritingSettingsView: View {
     @ObservedObject var session: WritingSession
@@ -9,6 +23,9 @@ struct WritingSettingsView: View {
     @AppStorage("showQuickTools") private var showQuickTools = true
     @AppStorage("quickPenWidth") private var quickPenWidth = 2.0
     @AppStorage("fingerDrawing") private var fingerDrawing = true
+    @AppStorage("savedPenPalette") private var penData = Data()
+    @State private var penName = ""
+    private var pens: [SavedPen] { (try? JSONDecoder().decode([SavedPen].self,from:penData)) ?? [] }
 
     var body: some View {
         NavigationStack {
@@ -25,6 +42,27 @@ struct WritingSettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 } header: { Text("Умное письмо") }
                 Section("Быстрые инструменты") {
+                    TextField("Название любимого пера",text:$penName)
+                    Button("Запомнить текущее перо") {
+                        guard let pen = session.canvas?.tool as? PKInkingTool else { return }
+                        var r:CGFloat = 0,g:CGFloat = 0,b:CGFloat = 0,a:CGFloat = 0
+                        guard pen.color.resolvedColor(with:UITraitCollection(userInterfaceStyle:.light)).getRed(&r,green:&g,blue:&b,alpha:&a) else { return }
+                        guard let type = penTypes.firstIndex(of:pen.inkType) else { return }
+                        let item = SavedPen(title:penName,type:type,red:r,green:g,blue:b,alpha:a,width:pen.width)
+                        if let data = try? JSONEncoder().encode(pens+[item]) { penData = data; penName = "" }
+                    }.disabled(penName.trimmingCharacters(in:.whitespaces).isEmpty || !(session.canvas?.tool is PKInkingTool))
+                    ForEach(pens) { item in
+                        Button(item.title) {
+                            let color = UIColor(red:item.red,green:item.green,blue:item.blue,alpha:item.alpha)
+                            guard penTypes.indices.contains(item.type) else { return }
+                            let tool = PKInkingTool(penTypes[item.type],color:color,width:item.width)
+                            session.laserPointer = false; session.canvas?.tool = tool; session.picker.selectedTool = tool
+                            dismiss()
+                        }.disabled(session.readOnly)
+                    }.onDelete { offsets in
+                        var next = pens; next.remove(atOffsets:offsets)
+                        if let data = try? JSONEncoder().encode(next) { penData = data }
+                    }
                     Toggle("Показывать быстрые ручки", isOn: $showQuickTools)
                     Picker("Толщина быстрых ручек", selection: $quickPenWidth) {
                         Text("Тонкая · 1").tag(1.0)

@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import VisionKit
 import PencilKit
 import UIKit
 
@@ -16,6 +17,8 @@ struct NotebookEditor: View {
     @State private var searchingPages = false
     @State private var pageBatch = false
     @State private var sourcePDF = false
+    @State private var referenceOpen = false
+    @State private var scanning = false
     @State private var workspace = false
     @State private var studyCards = false
     @State private var clockOpen = false
@@ -71,11 +74,17 @@ struct NotebookEditor: View {
                     ContentUnavailableView("Страница не загружена", systemImage: "exclamationmark.triangle", description: Text(renderError))
                     Button("Повторить") { render(page) }
                 } else if let background {
+                    HStack(spacing:0) {
+                    if referenceOpen {
+                        ReferencePane(editorID:notebookID,visible:$referenceOpen).frame(maxWidth:.infinity)
+                        Divider()
+                    }
                     WritingCanvas(drawing: page.drawing, size: page.size, background: background,
                                   fingerDrawing: fingerDrawing, scribbleErase: scribbleErase,
                                   straightenLines: straightenLines, haptics: gestureHaptics, session: session) { data in
                         store.updatePage(notebookID, page.id) { $0.drawing = data }
                     }.id(CanvasIdentity(pageID: page.id, width: page.width, height: page.height, revision: canvasRevision))
+                    }
                 } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
             } else {
                 ContentUnavailableView("Тетрадь не найдена", systemImage: "book.closed")
@@ -171,6 +180,14 @@ struct NotebookEditor: View {
             if let page { StudySession(notebookID: notebookID, pageID: page.id) }
         }
         .sheet(isPresented: $clockOpen, onDismiss: { session.resume() }) { SessionClock(notebook:notebookID) }
+        .sheet(isPresented:$scanning,onDismiss:{ session.resume() }) {
+            ScanPages { result in
+                scanning = false
+                guard let result, let page else { return }
+                do { pageID = try store.insertScans(result.get(),in:notebookID,after:page.id) }
+                catch { store.error = error.localizedDescription }
+            }
+        }
         .sheet(isPresented: $sourcePDF, onDismiss: { session.resume() }) {
             if let page, let asset = page.pdfAsset, let url = try? store.assetURL(asset) {
                 SourcePDFReader(url: url, index: page.pdfPage ?? 0) { index in
@@ -215,6 +232,10 @@ struct NotebookEditor: View {
         Menu {
             Button("Найти на страницах", systemImage: "magnifyingglass") { session.prepareForModal(); searchingPages = true }
                 .keyboardShortcut("f", modifiers:.command)
+            Toggle("Вторая тетрадь рядом",isOn:$referenceOpen)
+            if VNDocumentCameraViewController.isSupported {
+                Button("Сканировать листы",systemImage:"doc.viewfinder") { session.prepareForModal(); scanning = true }.disabled(session.readOnly)
+            }
             Button("Таймер и секундомер", systemImage:"timer") { session.prepareForModal(); clockOpen = true }
             Button("Выделение, объекты и самопроверка", systemImage: "lasso") { session.prepareForModal(); workspace = true }
             Button("Учебные карточки", systemImage: "rectangle.on.rectangle") { session.prepareForModal(); studyCards = true }.disabled(session.readOnly)

@@ -94,7 +94,10 @@ final class LibraryStore: ObservableObject {
             let folder = try URL(resolvingBookmarkData:Data(contentsOf:marker),options:[],relativeTo:nil,bookmarkDataIsStale:&stale)
             guard folder.startAccessingSecurityScopedResource() else { throw CocoaError(.fileReadNoPermission) }
             defer { folder.stopAccessingSecurityScopedResource() }
-            let destination = folder.appendingPathComponent("notes-by-Blum-" + Date.now.formatted(.iso8601.year().month().day()) + ".blumlibrary")
+            let key = "BlumBackupInstallID"
+            let install = UserDefaults.standard.string(forKey:key).flatMap(UUID.init(uuidString:)) ?? UUID()
+            UserDefaults.standard.set(install.uuidString,forKey:key)
+            let destination = folder.appendingPathComponent("notes-by-Blum-" + install.uuidString + "-" + Date.now.formatted(.iso8601.year().month().day()) + ".blumlibrary")
             try fullBackupData().write(to:destination,options:.atomic)
             lastBackupDigest = lastKnownDigest; backupStatus = "Копия сохранена " + Date().formatted()
         } catch { backupStatus = "Ошибка резервной копии: " + error.localizedDescription }
@@ -349,6 +352,17 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    func replacePage(in id: UUID, expected: NotePage, with replacement: NotePage) throws {
+        var next = library
+        guard !loadFailed, replacement.id == expected.id,
+              let n = next.notebooks.firstIndex(where: { $0.id == id }),
+              let p = next.notebooks[n].pages.firstIndex(of: expected) else { throw NoteError.invalidFile }
+        next.notebooks[n].pages[p] = replacement
+        next.notebooks[n].updatedAt = Date()
+        try Self.validate(next.notebooks[n], inspectInk: true)
+        try commit(next)
+    }
+
     func addFolder(_ title: String) throws {
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw NoteError.emptyTitle }
@@ -410,6 +424,29 @@ final class LibraryStore: ObservableObject {
         try Self.validate(next.notebooks[noteIndex], inspectInk: false)
         try commit(next)
         return page.id
+    }
+    func insertScans(_ scans: [UIImage], in id: UUID, after pageID: UUID) throws -> UUID {
+        guard !scans.isEmpty, let n = library.notebooks.firstIndex(where:{ $0.id == id }),
+              let anchor = library.notebooks[n].pages.firstIndex(where:{ $0.id == pageID }),
+              scans.count + library.notebooks[n].pages.count <= 2000 else { throw NoteError.invalidFile }
+        var files: [URL] = []
+        do {
+            let pages = try scans.map { image -> NotePage in
+                guard let raw = image.jpegData(compressionQuality:0.85) else { throw NoteError.invalidFile }
+                let prepared = try ImageLoader.prepareForStorage(raw)
+                let asset = try storeAsset(prepared.data,extension:prepared.suffix)
+                files.append(try assetURL(asset))
+                var page = NotePage(paper:.blank)
+                let box = try ImageLoader.fittedRect(image:prepared.size,page:page.size)
+                page.images = [PageImage(asset:asset,x:box.minX,y:box.minY,width:box.width,height:box.height)]
+                return page
+            }
+            var next = library
+            next.notebooks[n].pages.insert(contentsOf:pages,at:anchor+1)
+            next.notebooks[n].updatedAt = Date()
+            try commit(next)
+            return pages[0].id
+        } catch { for url in files { try? manager.removeItem(at:url) }; throw error }
     }
 
     func configurePaper(in noteID: UUID, pageID: UUID, configuration: PaperConfiguration, resize: Bool) throws {

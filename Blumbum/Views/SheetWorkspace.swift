@@ -206,8 +206,8 @@ struct SheetWorkspace: View {
         guard let current = store.notebook(notebookID)?.pages.first(where:{ $0.id == original.id }), current == original else {
             issue = "Страница изменилась. Откройте её заново."; return
         }
-        if store.updatePage(notebookID,original.id,{ $0 = draft }) && store.flush() { dismiss() }
-        else { issue = store.error }
+        do { try store.replacePage(in: notebookID, expected: original, with: draft); dismiss() }
+        catch { issue = error.localizedDescription }
     }
     private func exportPNG() {
         render()
