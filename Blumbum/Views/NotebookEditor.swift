@@ -12,6 +12,7 @@ struct NotebookEditor: View {
     @State private var background: UIImage?
     @State private var renderError: String?
     @State private var showPages = false
+    @State private var searchingPages = false
     @State private var showObjects = false
     @State private var showHelp = false
     @State private var showWritingSettings = false
@@ -90,6 +91,7 @@ struct NotebookEditor: View {
             }
         }
         .onAppear {
+            store.editingNotebookID = notebookID
             if pageID == nil {
                 let saved = UserDefaults.standard.string(forKey: "lastPage.\(notebookID.uuidString)").flatMap(UUID.init(uuidString:))
                 pageID = note?.pages.first { $0.id == saved }?.id ?? note?.pages.first?.id
@@ -114,7 +116,11 @@ struct NotebookEditor: View {
         }
         .onChange(of: session.readOnly) { _, _ in session.hideHint() }
         .onChange(of: session.laserPointer) { _, _ in session.cancelPendingRecognition?(); session.hideHint() }
-        .onDisappear { session.cancelPendingRecognition?(); store.flush(); exportTask?.cancel(); exportTask = nil; exportingPDF = false }
+        .onDisappear {
+            store.editingNotebookID = nil
+            session.cancelPendingRecognition?(); store.flush(); exportTask?.cancel(); exportTask = nil; exportingPDF = false
+            Task { await store.syncPages() }
+        }
         .onChange(of: photo) { _, item in
             guard let item, let destinationPage = page else { return }
             isAddingImage = true
@@ -137,6 +143,9 @@ struct NotebookEditor: View {
         }
         .sheet(isPresented: $showPages, onDismiss: { session.resume() }) {
             PageOrganizer(notebookID: notebookID, selectedPage: Binding(get: { page?.id }, set: { pageID = $0 }), readOnly: session.readOnly)
+        }
+        .sheet(isPresented: $searchingPages, onDismiss: { session.resume() }) {
+            NoteSearch(notebookID: notebookID) { _, id in pageID = id }
         }
         .sheet(isPresented: $showWritingSettings, onDismiss: { session.resume() }) { WritingSettingsView(session: session) }
         .sheet(item: $paperRequest, onDismiss: { session.resume() }) { request in
@@ -171,6 +180,7 @@ struct NotebookEditor: View {
 
     private var notebookActionsMenu: some View {
         Menu {
+            Button("Найти на страницах", systemImage: "magnifyingglass") { session.prepareForModal(); searchingPages = true }
             Button("Письмо и жесты", systemImage: "slider.horizontal.3") { showWritingSettings = true }
             Button("Мои элементы", systemImage: "square.stack") {
                 session.cancelPendingRecognition?(); showInkElements = true

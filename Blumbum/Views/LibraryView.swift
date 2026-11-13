@@ -13,6 +13,8 @@ struct LibraryView: View {
     @State private var path: [UUID] = []
     @State private var newNotebook = false
     @State private var importing = false
+    @State private var selectingSyncFolder = false
+    @State private var searchingPages = false
     @State private var confirmRecovery = false
     @State private var importingRecovery = false
     @State private var showPlus = false
@@ -62,6 +64,8 @@ struct LibraryView: View {
                 }
                 Section {
                     Label("Корзина", systemImage: "trash").tag("trash")
+                    Button("Подключить папку iCloud Drive", systemImage: "icloud") { selectingSyncFolder = true }
+                    if !store.syncStatus.isEmpty { Text(store.syncStatus).font(.caption) }
                     Button { showPlus = true } label: {
                         Label(subscription.hasPremium ? "notes by Blum Plus · активен" : "notes by Blum Plus", systemImage: "sparkles")
                     }
@@ -122,6 +126,7 @@ struct LibraryView: View {
                 .searchable(text: $search, prompt: "Название или печатный текст")
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button { searchingPages = true } label: { Image(systemName: "doc.text.magnifyingglass") }.accessibilityLabel("Поиск по всем страницам")
                         Button { showPlus = true } label: { Image(systemName: "sparkles") }.accessibilityLabel("Подписка и настройки")
                         Button { importing = true } label: { Image(systemName: "square.and.arrow.down") }.accessibilityLabel("Импорт PDF или тетради")
                             .disabled(store.isBusy || store.loadFailed || !subscription.isReady)
@@ -137,6 +142,16 @@ struct LibraryView: View {
             NewNotebookView { id in path.append(id) }
         }
         .sheet(isPresented: $showPlus) { PlusView() }
+        .sheet(isPresented: $searchingPages) {
+            NoteSearch(notebookID: nil) { id, page in
+                UserDefaults.standard.set(page.uuidString, forKey: "lastPage.\(id.uuidString)")
+                path.append(id)
+            }
+        }
+        .fileImporter(isPresented: $selectingSyncFolder, allowedContentTypes: [.folder]) { result in
+            do { try store.chooseSyncFolder(result.get()); Task { await store.syncPages() } }
+            catch { store.error = error.localizedDescription }
+        }
         .sheet(item: $editing) { note in NotebookSettingsView(note: note) }
         .sheet(item: $shared) { ShareSheet(url: $0.url) }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .listnote]) { result in

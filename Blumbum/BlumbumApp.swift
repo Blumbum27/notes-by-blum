@@ -13,6 +13,13 @@ struct BlumbumApp: App {
                 .environmentObject(subscription)
                 .tint(Theme.accent)
                 .task { store.performMaintenance(); await subscription.load() }
+                .task(id: scenePhase) {
+                    guard scenePhase == .active else { return }
+                    while !Task.isCancelled {
+                        await store.syncPages()
+                        do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                    }
+                }
                 .onChange(of: scenePhase) { _, phase in
                     if phase != .active { store.flush() }
                     if phase == .active { Task { await subscription.refreshEntitlements() } }

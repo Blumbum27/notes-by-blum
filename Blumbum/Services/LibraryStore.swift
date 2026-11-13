@@ -14,6 +14,84 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var recoveryNotice: String?
     @Published private(set) var hasUnsavedChanges = false
     private let root: URL
+    private var syncRunning = false
+    var editingNotebookID: UUID?
+    @Published private(set) var syncStatus = ""
+
+    func chooseSyncFolder(_ folder: URL) throws {
+        guard folder.startAccessingSecurityScopedResource() else { throw CocoaError(.fileReadNoPermission) }
+        defer { folder.stopAccessingSecurityScopedResource() }
+        let bookmark = try folder.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
+        try bookmark.write(to: root.appendingPathComponent("sync-folder.bookmark"), options: .atomic)
+        syncStatus = "Папка подключена"
+    }
+
+    func syncPages() async {
+        let bookmark = root.appendingPathComponent("sync-folder.bookmark")
+        guard manager.fileExists(atPath: bookmark.path), !loadFailed, !isBusy, !syncRunning else { return }
+        syncRunning = true
+        defer { syncRunning = false }
+        do {
+            var stale = false
+            let folder = try URL(resolvingBookmarkData: Data(contentsOf: bookmark), options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
+            guard folder.startAccessingSecurityScopedResource() else { throw CocoaError(.fileReadNoPermission) }
+            defer { folder.stopAccessingSecurityScopedResource() }
+            if stale { try chooseSyncFolder(folder) }
+            let directory = folder.appendingPathComponent("notes-by-Blum-sync", isDirectory: true)
+            try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let entries = try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            for entry in entries where entry.pathExtension == "icloud" {
+                try? manager.startDownloadingUbiquitousItem(at: entry)
+            }
+            var ids = Set(library.notebooks.filter { $0.deletedAt == nil }.map(\.id))
+            ids.formUnion(entries.filter { $0.pathExtension == "blumsync" }.compactMap { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) })
+            for id in ids.sorted(by: { $0.uuidString < $1.uuidString }) {
+                try Task.checkCancellation()
+                if notebook(id)?.deletedAt != nil { continue }
+                try await syncNotebook(id, directory: directory)
+            }
+            syncStatus = "Проверено в " + Date().formatted(date: .omitted, time: .shortened)
+        } catch is CancellationError {} catch { syncStatus = "Синхронизация отложена. " + error.localizedDescription }
+    }
+
+    private func syncNotebook(_ id: UUID, directory: URL) async throws {
+        let target = directory.appendingPathComponent(id.uuidString + ".blumsync")
+        let checkpoint = root.appendingPathComponent("sync-" + id.uuidString + ".json")
+        let base = manager.fileExists(atPath: checkpoint.path) ? try JSONDecoder().decode([NotePage].self, from: Data(contentsOf: checkpoint)) : []
+        let before = notebook(id)
+        var localAssets: [String: Data] = [:]
+        if let before { for name in referencedAssets(before) { localAssets[name] = try readAsset(name) } }
+        let local = before.map { NotebookArchive(notebook: $0, assets: localAssets) }
+        guard let archive = try await Task.detached(priority: .utility, operation: {
+            try SyncFile.exchange(target, id: id, base: base, local: local)
+        }).value else { return }
+        // The editor can receive new strokes while the provider is reading the file.
+        guard notebook(id) == before, !loadFailed, !isBusy else { return }
+        if editingNotebookID == id && before?.pages != archive.notebook.pages { return }
+        try Self.validate(archive.notebook)
+        var updated = before ?? archive.notebook
+        updated.pages = archive.notebook.pages
+        if before == nil { updated.folderID = nil }
+        if updated != before {
+            for name in referencedAssets(updated) {
+                guard let bytes = archive.assets[name] else { throw NoteError.missingAsset(name) }
+                let destination = try assetURL(name)
+                if manager.fileExists(atPath: destination.path) {
+                    guard try readAsset(name) == bytes else { throw NoteError.invalidFile }
+                } else {
+                    if name.lowercased().hasSuffix(".pdf") {
+                        guard let pdf = PDFDocument(data: bytes), !pdf.isLocked else { throw NoteError.invalidFile }
+                    } else { try ImageLoader.validate(bytes) }
+                    try bytes.write(to: destination, options: .atomic)
+                }
+            }
+            var next = library
+            if let index = next.notebooks.firstIndex(where: { $0.id == id }) { next.notebooks[index] = updated }
+            else { next.notebooks.append(updated) }
+            try commit(next)
+        }
+        if base != updated.pages { try encoder.encode(updated.pages).write(to: checkpoint, options: .atomic) }
+    }
     private let manager = FileManager.default
     private var pendingSave: Task<Void, Never>?
     private var assetPins: [String: Int] = [:]
