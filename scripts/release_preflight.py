@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 import argparse
 import json
+import plistlib
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,12 +30,13 @@ def main():
     config = json.loads((ROOT / 'Blumbum/Resources/AppConfiguration.json').read_text(encoding='utf-8'))
     issues = problems(config)
     if not issues and options.check_urls:
+        display_name = plistlib.loads((ROOT / 'Blumbum/Resources/Info.plist').read_bytes())['CFBundleDisplayName']
         for key in ['privacyPolicyURL', 'supportURL']:
             try:
                 with urlopen(Request(config[key], headers={'User-Agent': 'notes by Blum release check'}), timeout=20) as response:
                     final = urlparse(response.geturl())
                     content = response.read(2_000_000).decode('utf-8', errors='replace')
-                    if response.status != 200 or final.scheme != 'https' or 'blumbum' not in content.lower() or 'text/html' not in response.headers.get('Content-Type', ''):
+                    if response.status != 200 or final.scheme != 'https' or display_name.casefold() not in content.casefold() or 'text/html' not in response.headers.get('Content-Type', ''):
                         issues.append(f'{key}: page must be public HTML for notes by Blum over HTTPS.')
             except Exception as error:
                 issues.append(f'{key}: page unavailable ({type(error).__name__}).')
