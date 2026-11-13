@@ -4,6 +4,7 @@ import PencilKit
 import UIKit
 
 struct NotebookEditor: View {
+    @Environment(\.dismiss) private var dismissEditor
     @EnvironmentObject private var store: LibraryStore
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var session = WritingSession()
@@ -82,7 +83,12 @@ struct NotebookEditor: View {
         }
         .navigationTitle(note?.title ?? "Тетрадь")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button { dismissEditor() } label: { Image(systemName: "chevron.backward") }
+                    .accessibilityLabel("В библиотеку")
+            }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 if exportingPDF { ProgressView().accessibilityLabel("Экспорт PDF") }
                 Button { session.undo() } label: { Image(systemName: "arrow.uturn.backward") }.disabled(!session.canUndo || session.readOnly).accessibilityLabel("Отменить штрих").accessibilityIdentifier("writing.undo").keyboardShortcut("z", modifiers: .command)
