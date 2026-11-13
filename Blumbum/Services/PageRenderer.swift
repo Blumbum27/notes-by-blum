@@ -64,7 +64,20 @@ enum PageRenderer {
             PaperTemplateRenderer.paint(page, context: context)
         }
         for (item, image) in content.images {
-            image.draw(in: CGRect(x: item.x, y: item.y, width: item.width, height: item.height))
+            context.saveGState()
+            let turns = (item.quarterTurns ?? 0) % 4
+            context.translateBy(x: item.x + item.width / 2, y: item.y + item.height / 2)
+            context.rotate(by: CGFloat(turns) * .pi / 2)
+            var box = CGSize(width: turns.isMultiple(of: 2) ? item.width : item.height,
+                             height: turns.isMultiple(of: 2) ? item.height : item.width)
+            if item.squareCrop == true {
+                let side = min(box.width, box.height)
+                context.clip(to: CGRect(x: -side/2, y: -side/2, width: side, height: side))
+                let scale = side / max(1, min(image.size.width, image.size.height))
+                box = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            }
+            image.draw(in: CGRect(x: -box.width/2, y: -box.height/2, width: box.width, height: box.height))
+            context.restoreGState()
         }
         for item in page.texts {
             var textRect = CGRect(x: item.x, y: item.y, width: max(30, page.width - item.x - 32), height: max(30, page.height - item.y - 24))
@@ -75,9 +88,19 @@ enum PageRenderer {
                 UIBezierPath(roundedRect: noteRect, cornerRadius: 8).fill()
                 textRect = noteRect.insetBy(dx: 14, dy: 14)
             }
+            let paragraph = NSMutableParagraphStyle()
+            switch item.alignment ?? .left {
+            case .left: paragraph.alignment = .left
+            case .right: paragraph.alignment = .right
+            case .center: paragraph.alignment = .center
+            }
+            var font = UIFont.systemFont(ofSize: item.fontSize, weight: item.bold == true ? .bold : .regular)
+            if item.italic == true, let descriptor = font.fontDescriptor.withSymbolicTraits(font.fontDescriptor.symbolicTraits.union(.traitItalic)) {
+                font = UIFont(descriptor: descriptor, size: item.fontSize)
+            }
             (item.text as NSString).draw(
                 in: textRect,
-                withAttributes: [.font: UIFont.systemFont(ofSize: item.fontSize), .foregroundColor: UIColor.black]
+                withAttributes: [.font: font, .foregroundColor: UIColor.black, .paragraphStyle: paragraph]
             )
         }
         context.restoreGState()

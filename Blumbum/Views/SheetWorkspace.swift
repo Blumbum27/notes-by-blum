@@ -76,6 +76,31 @@ struct SheetWorkspace: View {
                             Button("Увеличить на 10%") { transform(scale: 1.1) }
                             Button("Уменьшить на 10%") { transform(scale: 1/1.1) }
                             Button("Дублировать") { transform(dx: 12, dy: 12, copy: true) }
+                            Menu("Оформление текста") {
+                                Button("Полужирный") { style { $0.bold = $0.bold != true } }
+                                Button("Курсив") { style { $0.italic = $0.italic != true } }
+                                Button("По левому краю") { style { $0.alignment = .left } }
+                                Button("По центру") { style { $0.alignment = .center } }
+                                Button("По правому краю") { style { $0.alignment = .right } }
+                            }.disabled(texts.isEmpty)
+                            Menu("Фотографии") {
+                                Button("Повернуть вправо") {
+                                    for i in draft.images.indices where pictures.contains(draft.images[i].id) {
+                                        var item = draft.images[i]
+                                        item.quarterTurns = ((item.quarterTurns ?? 0) % 4 + 1) % 4
+                                        let w = item.width
+                                        item.width = item.height; item.height = w
+                                        item.x = max(0, item.x + (w - item.width)/2)
+                                        item.y = max(0, item.y + (item.width - w)/2)
+                                        draft.images[i] = item
+                                    }
+                                }
+                                Button("Квадратная обрезка вкл./выкл.") {
+                                    for i in draft.images.indices where pictures.contains(draft.images[i].id) {
+                                        draft.images[i].squareCrop = draft.images[i].squareCrop != true
+                                    }
+                                }
+                            }.disabled(pictures.isEmpty)
                             Button("Редактировать текст") {
                                 if let text = draft.texts.first(where: { texts.contains($0.id) }) { editText = text.text; editing = text.id }
                             }.disabled(texts.count != 1)
@@ -120,6 +145,9 @@ struct SheetWorkspace: View {
         }
     }
     private var ink: PKDrawing { (try? PKDrawing(data: draft.drawing)) ?? PKDrawing() }
+    private func style(_ change: (inout TextBlock) -> Void) {
+        for i in draft.texts.indices where texts.contains(draft.texts[i].id) { change(&draft.texts[i]) }
+    }
     private func render() {
         do {
             let background = try PageRenderer.background(draft, store: store)

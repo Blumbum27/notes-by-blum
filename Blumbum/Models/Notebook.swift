@@ -44,7 +44,12 @@ struct TextBlock: Identifiable, Codable, Equatable, Sendable {
     var y: Double = 80
     var fontSize: Double = 20
     var background: PaperTint? = nil
+    var bold: Bool? = nil
+    var italic: Bool? = nil
+    var alignment: BlockAlignment? = nil
 }
+
+enum BlockAlignment: String, Codable, Sendable { case left, center, right }
 
 struct PageImage: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
@@ -53,6 +58,8 @@ struct PageImage: Identifiable, Codable, Equatable, Sendable {
     var y: Double = 120
     var width: Double = 240
     var height: Double = 180
+    var quarterTurns: Int? = nil
+    var squareCrop: Bool? = nil
 }
 
 struct NotePage: Identifiable, Codable, Equatable, Sendable {

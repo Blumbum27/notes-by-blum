@@ -16,6 +16,10 @@ actor PageTextReader {
     private var documentURL: URL?
 
     func text(_ page: NotePage, pdfURL: URL?) throws -> String {
+        try searchableText(page, pdfURL: pdfURL).content
+    }
+
+    func searchableText(_ page: NotePage, pdfURL: URL?) throws -> (content: String, incomplete: Bool) {
         var parts = page.texts.map(\.text)
         if let pdfURL, let index = page.pdfPage {
             if documentURL != pdfURL {
@@ -25,8 +29,9 @@ actor PageTextReader {
             if let text = document?.page(at: index)?.string { parts.append(text) }
         }
         if !page.drawing.isEmpty {
+            do {
             let ink = try PKDrawing(data: page.drawing)
-            guard !ink.strokes.isEmpty else { return parts.joined(separator: "\n") }
+            guard !ink.strokes.isEmpty else { return (parts.joined(separator: "\n"), false) }
             let bounds = ink.bounds.insetBy(dx: -8, dy: -8)
             let scale = min(3, 3000 / max(1, max(bounds.width, bounds.height)))
             let format = UIGraphicsImageRendererFormat()
@@ -46,8 +51,12 @@ actor PageTextReader {
                 try VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
                 parts += (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
             }
+            } catch {
+                guard !parts.isEmpty else { throw error }
+                return (parts.joined(separator: "\n"), true)
+            }
         }
-        return parts.joined(separator: "\n")
+        return (parts.joined(separator: "\n"), false)
     }
 }
 
@@ -97,8 +106,10 @@ struct NoteSearch: View {
                 if Task.isCancelled { return }
                 do {
                     let url = try page.pdfAsset.map { try store.assetURL($0) }
-                    let text = try await reader.text(page, pdfURL: url)
+                    let resultText = try await reader.searchableText(page, pdfURL: url)
                     if Task.isCancelled { return }
+                    if resultText.incomplete { skipped += 1 }
+                    let text = resultText.content
                     guard let match = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) else { continue }
                     let start = text.index(match.lowerBound, offsetBy: -35, limitedBy: text.startIndex) ?? text.startIndex
                     let end = text.index(match.upperBound, offsetBy: 60, limitedBy: text.endIndex) ?? text.endIndex

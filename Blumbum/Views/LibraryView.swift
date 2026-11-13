@@ -12,14 +12,22 @@ struct LibraryView: View {
     @State private var search = ""
     @State private var path: [UUID] = []
     @State private var newNotebook = false
+    private enum PickerPurpose {
+        case document, syncFolder, backupFolder, backupFile, recovery
+        var types: [UTType] {
+            switch self {
+            case .document: return [.pdf, .listnote, .jpeg, .png, .heic, .tiff, .webP]
+            case .syncFolder, .backupFolder: return [.folder]
+            case .backupFile: return [UTType(filenameExtension:"blumlibrary") ?? .data]
+            case .recovery: return [.listnote]
+            }
+        }
+    }
+    @State private var pickerPurpose: PickerPurpose = .document
     @State private var importing = false
-    @State private var selectingSyncFolder = false
-    @State private var backupFolder = false
-    @State private var backupRestore = false
     @State private var searchingPages = false
     @AppStorage("library.sort") private var sort = "recent"
     @State private var confirmRecovery = false
-    @State private var importingRecovery = false
     @State private var showPlus = false
     @State private var newFolder = false
     @State private var folderName = ""
@@ -82,13 +90,13 @@ struct LibraryView: View {
                 }
                 Section {
                     Label("Корзина", systemImage: "trash").tag("trash")
-                    Button("Подключить папку iCloud Drive", systemImage: "icloud") { selectingSyncFolder = true }
+                    Button("Подключить папку iCloud Drive", systemImage: "icloud") { pick(.syncFolder) }
                     Menu("Резервные копии", systemImage: "externaldrive") {
                         Button("Экспорт всей библиотеки") {
                             do { shared = try SharedFile(url:store.exportLibrary()) } catch { store.error = error.localizedDescription }
                         }
-                        Button("Папка автоматических копий") { backupFolder = true }
-                        Button("Восстановить полную копию") { backupRestore = true }
+                        Button("Папка автоматических копий") { pick(.backupFolder) }
+                        Button("Восстановить полную копию") { pick(.backupFile) }
                     }
                     if !store.backupStatus.isEmpty { Text(store.backupStatus).font(.caption) }
                     if !store.syncStatus.isEmpty { Text(store.syncStatus).font(.caption) }
@@ -154,7 +162,7 @@ struct LibraryView: View {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button { searchingPages = true } label: { Image(systemName: "doc.text.magnifyingglass") }.accessibilityLabel("Поиск по всем страницам")
                         Button { showPlus = true } label: { Image(systemName: "sparkles") }.accessibilityLabel("Подписка и настройки")
-                        Button { importing = true } label: { Image(systemName: "square.and.arrow.down") }.accessibilityLabel("Импорт PDF или тетради")
+                        Button { pick(.document) } label: { Image(systemName: "square.and.arrow.down") }.accessibilityLabel("Импорт PDF или тетради")
                             .disabled(store.isBusy || store.loadFailed || !subscription.isReady)
                         Button { createRequested() } label: { Label("Тетрадь", systemImage: "plus") }
                             .accessibilityIdentifier("library.create")
@@ -167,42 +175,36 @@ struct LibraryView: View {
         .sheet(isPresented: $newNotebook) {
             NewNotebookView { id in path.append(id) }
         }
+        .fileImporter(isPresented: $importing, allowedContentTypes: pickerPurpose.types) { result in
+            do {
+                let url = try result.get()
+                switch pickerPurpose {
+                case .document: Task { await store.importDocument(url, premium: subscription.hasPremium) }
+                case .recovery: Task { await store.restoreBlockedLibrary(from: url) }
+                case .syncFolder: try store.chooseSyncFolder(url); Task { await store.syncPages() }
+                case .backupFolder: try store.chooseBackupFolder(url)
+                case .backupFile: try store.restoreFullBackup(url)
+                }
+            } catch {
+                if (error as NSError).domain != NSCocoaErrorDomain || (error as NSError).code != NSUserCancelledError {
+                    store.error = error.localizedDescription
+                }
+            }
+        }
         .sheet(isPresented: $showPlus) { PlusView() }
-        .fileImporter(isPresented:$backupFolder,allowedContentTypes:[.folder]) { result in
-            do { try store.chooseBackupFolder(result.get()) } catch { store.error = error.localizedDescription }
-        }
-        .fileImporter(isPresented:$backupRestore,allowedContentTypes:[UTType(filenameExtension:"blumlibrary") ?? .data]) { result in
-            do { try store.restoreFullBackup(result.get()) } catch { store.error = error.localizedDescription }
-        }
         .sheet(isPresented: $searchingPages) {
             NoteSearch(notebookID: nil) { id, page in
                 UserDefaults.standard.set(page.uuidString, forKey: "lastPage.\(id.uuidString)")
                 path.append(id)
             }
         }
-        .fileImporter(isPresented: $selectingSyncFolder, allowedContentTypes: [.folder]) { result in
-            do { try store.chooseSyncFolder(result.get()); Task { await store.syncPages() } }
-            catch { store.error = error.localizedDescription }
-        }
         .sheet(item: $editing) { note in NotebookSettingsView(note: note) }
         .sheet(item: $shared) { ShareSheet(url: $0.url) }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf, .listnote, .jpeg, .png, .heic, .tiff, .webP]) { result in
-            switch result {
-            case .success(let url): Task { await store.importDocument(url, premium: subscription.hasPremium) }
-            case .failure(let error): store.error = error.localizedDescription
-            }
-        }
         .alert("Восстановить из .listnote?", isPresented: $confirmRecovery) {
             Button("Отмена", role: .cancel) {}
-            Button("Выбрать копию") { importingRecovery = true }
+            Button("Выбрать копию") { pick(.recovery) }
         } message: {
             Text("Сначала будет проверена выбранная копия. При успехе откроется библиотека с одной восстановленной тетрадью. Все исходные недоступные файлы и вложения будут сохранены отдельно, без удаления.")
-        }
-        .fileImporter(isPresented: $importingRecovery, allowedContentTypes: [.listnote]) { result in
-            switch result {
-            case .success(let url): Task { await store.restoreBlockedLibrary(from: url) }
-            case .failure(let error): store.error = error.localizedDescription
-            }
         }
         .alert("Новая папка", isPresented: $newFolder) {
             TextField("Название", text: $folderName)
@@ -221,6 +223,11 @@ struct LibraryView: View {
                 deleting = nil
             }
         } message: { Text("Восстановить её можно будет только из заранее экспортированной копии .listnote.") }
+    }
+
+    private func pick(_ purpose: PickerPurpose) {
+        pickerPurpose = purpose
+        importing = true
     }
 
     private func createRequested() {
