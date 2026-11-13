@@ -14,6 +14,11 @@ struct NotebookEditor: View {
     @State private var renderError: String?
     @State private var showPages = false
     @State private var searchingPages = false
+    @State private var pageBatch = false
+    @State private var sourcePDF = false
+    @State private var workspace = false
+    @State private var canvasRevision = UUID()
+    @State private var previousPage: UUID?
     @State private var showObjects = false
     @State private var showHelp = false
     @State private var showWritingSettings = false
@@ -68,7 +73,7 @@ struct NotebookEditor: View {
                                   fingerDrawing: fingerDrawing, scribbleErase: scribbleErase,
                                   straightenLines: straightenLines, haptics: gestureHaptics, session: session) { data in
                         store.updatePage(notebookID, page.id) { $0.drawing = data }
-                    }.id(CanvasIdentity(pageID: page.id, width: page.width, height: page.height))
+                    }.id(CanvasIdentity(pageID: page.id, width: page.width, height: page.height, revision: canvasRevision))
                 } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
             } else {
                 ContentUnavailableView("Тетрадь не найдена", systemImage: "book.closed")
@@ -154,6 +159,21 @@ struct NotebookEditor: View {
         .sheet(isPresented: $searchingPages, onDismiss: { session.resume() }) {
             NoteSearch(notebookID: notebookID) { _, id in pageID = id }
         }
+        .sheet(isPresented: $pageBatch, onDismiss: { session.resume() }) {
+            if let page { PageBatchView(sourceID: notebookID, currentPage: page.id, readOnly: session.readOnly) }
+        }
+        .sheet(isPresented: $workspace, onDismiss: { canvasRevision = UUID(); session.resume() }) {
+            if let page { SheetWorkspace(notebookID: notebookID, original: page, readOnly: session.readOnly) }
+        }
+        .sheet(isPresented: $sourcePDF, onDismiss: { session.resume() }) {
+            if let page, let asset = page.pdfAsset, let url = try? store.assetURL(asset) {
+                SourcePDFReader(url: url, index: page.pdfPage ?? 0) { index in
+                    if let id = note?.pages.first(where: { $0.pdfAsset == asset && $0.pdfPage == index })?.id {
+                        previousPage = pageID; pageID = id
+                    }
+                }
+            }
+        }
         .sheet(isPresented: $showWritingSettings, onDismiss: { session.resume() }) { WritingSettingsView(session: session) }
         .sheet(item: $paperRequest, onDismiss: { session.resume() }) { request in
             PaperDesignerView(configuration: PaperConfiguration(page: request.page), canResize: request.canResize, failureInfo: { store.error }) { configuration in
@@ -188,6 +208,15 @@ struct NotebookEditor: View {
     private var notebookActionsMenu: some View {
         Menu {
             Button("Найти на страницах", systemImage: "magnifyingglass") { session.prepareForModal(); searchingPages = true }
+            Button("Выделение, объекты и самопроверка", systemImage: "lasso") { session.prepareForModal(); workspace = true }
+            Button("Линейка", systemImage: "ruler") { session.canvas?.isRulerActive.toggle() }.disabled(session.readOnly)
+            if page?.pdfAsset != nil {
+                Button("Читать исходный PDF", systemImage: "book") { session.prepareForModal(); sourcePDF = true }
+            }
+            if let previousPage {
+                Button("К предыдущему месту", systemImage: "arrow.uturn.left") { pageID = previousPage; self.previousPage = nil }
+            }
+            Button("Выбрать страницы для переноса или экспорта", systemImage: "doc.on.doc") { session.prepareForModal(); pageBatch = true }
             Button("Письмо и жесты", systemImage: "slider.horizontal.3") { showWritingSettings = true }
             Button("Мои элементы", systemImage: "square.stack") {
                 session.cancelPendingRecognition?(); showInkElements = true
@@ -317,6 +346,7 @@ private struct CanvasIdentity: Hashable {
     var pageID: UUID
     var width: Double
     var height: Double
+    var revision: UUID
 }
 
 struct PageOrganizer: View {

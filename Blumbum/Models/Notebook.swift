@@ -70,7 +70,14 @@ struct NotePage: Identifiable, Codable, Equatable, Sendable {
     var paperTemplateID: String? = nil
     var paperSpacing: Double? = nil
     var paperMargin: Double? = nil
+    var heading: String? = nil
+    var studyCovers: [StudyCover]? = nil
     var size: CGSize { CGSize(width: width, height: height) }
+}
+
+struct StudyCover: Identifiable, Codable, Equatable, Sendable {
+    var id = UUID()
+    var rect: CGRect
 }
 
 struct Notebook: Identifiable, Codable, Equatable, Sendable {

@@ -15,6 +15,7 @@ struct LibraryView: View {
     @State private var importing = false
     @State private var selectingSyncFolder = false
     @State private var searchingPages = false
+    @AppStorage("library.sort") private var sort = "recent"
     @State private var confirmRecovery = false
     @State private var importingRecovery = false
     @State private var showPlus = false
@@ -41,7 +42,11 @@ struct LibraryView: View {
             }
             return inSection && (search.isEmpty || note.title.localizedCaseInsensitiveContains(search)
                 || note.pages.contains { $0.texts.contains { $0.text.localizedCaseInsensitiveContains(search) } })
-        }.sorted { $0.updatedAt > $1.updatedAt }
+        }.sorted {
+            if sort == "title" { return $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+            if sort == "created" { return $0.createdAt > $1.createdAt }
+            return $0.updatedAt > $1.updatedAt
+        }
     }
 
     var body: some View {
@@ -49,6 +54,17 @@ struct LibraryView: View {
             List(selection: $section) {
                 Section {
                     Label("Все тетради", systemImage: "books.vertical").tag("all")
+                    Button("Быстрая заметка", systemImage: "square.and.pencil") {
+                        do {
+                            let id = try store.create(title: "Заметка " + Date().formatted(date: .numeric, time: .shortened), paper: .ruled, color: "teal", premium: subscription.hasPremium)
+                            section = "all"; path = [id]
+                        } catch NoteError.limitReached { showPlus = true } catch { store.error = error.localizedDescription }
+                    }.disabled(store.loadFailed || !subscription.isReady)
+                    Picker("Сортировка", selection: $sort) {
+                        Text("По изменению").tag("recent")
+                        Text("По названию").tag("title")
+                        Text("По созданию").tag("created")
+                    }
                     Label("Избранное", systemImage: "star").tag("favorites")
                 } header: {
                     VStack(alignment: .leading, spacing: 6) {

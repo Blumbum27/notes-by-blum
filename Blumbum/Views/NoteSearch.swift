@@ -11,7 +11,7 @@ private struct SearchHit: Identifiable {
     let excerpt: AttributedString
 }
 
-private actor PageTextReader {
+actor PageTextReader {
     private var document: PDFDocument?
     private var documentURL: URL?
 

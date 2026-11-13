@@ -157,6 +157,8 @@ enum PageRenderer {
                             paint(page, content: content, context: context.cgContext)
                             let scale = min(3, 4096 / max(rect.width, rect.height))
                             drawing.image(from: rect, scale: scale).draw(in: rect)
+                            UIColor.systemOrange.setFill()
+                            for cover in page.studyCovers ?? [] { context.cgContext.fill(cover.rect) }
                         } catch { renderingError = error }
                     }
                     if renderingError != nil { break }

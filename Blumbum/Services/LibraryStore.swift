@@ -204,6 +204,8 @@ final class LibraryStore: ObservableObject {
               !note.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               Set(note.pages.map(\.id)).count == note.pages.count else { throw NoteError.invalidFile }
         for page in note.pages {
+            guard (page.heading?.count ?? 0) <= 160, (page.studyCovers?.count ?? 0) <= 500,
+                  (page.studyCovers ?? []).allSatisfy({ !$0.rect.isEmpty && CGRect(origin: .zero, size: page.size).contains($0.rect) }) else { throw NoteError.invalidFile }
             if let spacing = page.paperSpacing { guard spacing.isFinite, (16...48).contains(spacing) else { throw NoteError.invalidFile } }
             if let margin = page.paperMargin { guard margin.isFinite, (16...64).contains(margin) else { throw NoteError.invalidFile } }
             if let id = page.paperTemplateID { guard !id.isEmpty, id.count <= 80 else { throw NoteError.invalidFile } }
@@ -294,6 +296,29 @@ final class LibraryStore: ObservableObject {
     func deleteInkElement(_ id: UUID) throws {
         var next = library
         next.inkElements?.removeAll { $0.id == id }
+        try commit(next)
+    }
+
+    func transferPages(_ ids: Set<UUID>, from source: UUID, to destination: UUID, before anchor: UUID?, move: Bool) throws {
+        var next = library
+        guard source != destination, !ids.isEmpty,
+              let a = next.notebooks.firstIndex(where: { $0.id == source && $0.deletedAt == nil }),
+              let b = next.notebooks.firstIndex(where: { $0.id == destination && $0.deletedAt == nil }) else { throw NoteError.invalidFile }
+        var pages = next.notebooks[a].pages.filter { ids.contains($0.id) }
+        guard pages.count == ids.count, pages.count + next.notebooks[b].pages.count <= 2000 else { throw NoteError.invalidFile }
+        let position: Int
+        if let anchor {
+            guard let index = next.notebooks[b].pages.firstIndex(where: { $0.id == anchor }) else { throw NoteError.invalidFile }
+            position = index
+        } else { position = next.notebooks[b].pages.count }
+        if move {
+            next.notebooks[a].pages.removeAll { ids.contains($0.id) }
+            if next.notebooks[a].pages.isEmpty { next.notebooks[a].pages = [NotePage()] }
+            next.notebooks[a].updatedAt = Date()
+        }
+        for index in pages.indices { pages[index].id = UUID() }
+        next.notebooks[b].pages.insert(contentsOf: pages, at: position)
+        next.notebooks[b].updatedAt = Date()
         try commit(next)
     }
 
