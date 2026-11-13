@@ -1,0 +1,61 @@
+name: Signed build and TestFlight upload
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: blumbum-testflight
+  cancel-in-progress: false
+jobs:
+  test:
+    uses: ./.github/workflows/ios.yml
+  upload:
+    needs: test
+    runs-on: macos-latest
+    environment: testflight
+    timeout-minutes: 45
+    env:
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      APP_BUNDLE_ID: ${{ vars.APP_BUNDLE_ID }}
+      IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.IOS_DISTRIBUTION_P12_BASE64 }}
+      IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_P12_PASSWORD }}
+      IOS_PROFILE_BASE64: ${{ secrets.IOS_PROFILE_BASE64 }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: python3 scripts/select_xcode.py
+      - name: Validate public release metadata
+        run: python3 scripts/release_preflight.py --check-urls
+      - name: Prepare ephemeral signing
+        run: python3 scripts/prepare_signing.py
+      - name: Archive, export and upload to App Store Connect
+        run: bash scripts/archive_upload.sh
+      - name: Keep signed IPA and debug symbols
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Blumbum-distribution
+          path: |
+            build/release/ipa/*.ipa
+            build/release/Blumbum.xcarchive/dSYMs
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Remove ephemeral signing material
+        if: always()
+        shell: python3 {0}
+        run: |
+          from pathlib import Path
+          import os, shutil, subprocess
+          root = Path(os.environ['RUNNER_TEMP']).resolve()
+          directory = root / 'blumbum-signing'
+          if directory.is_relative_to(root) and directory.exists():
+              subprocess.run(['security', 'delete-keychain', str(directory / 'signing.keychain-db')], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              uuid_file = directory / 'profile-uuid.txt'
+              profile_uuid = os.environ.get('PROFILE_UUID') or (uuid_file.read_text() if uuid_file.exists() else None)
+              if profile_uuid:
+                  for relative in ['Library/MobileDevice/Provisioning Profiles', 'Library/Developer/Xcode/UserData/Provisioning Profiles']:
+                      (Path.home() / relative / (profile_uuid + '.mobileprovision')).unlink(missing_ok=True)
+              shutil.rmtree(directory)

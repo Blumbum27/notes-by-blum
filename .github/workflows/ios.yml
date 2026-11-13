@@ -1,0 +1,37 @@
+name: iOS build and tests
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select App Store compatible Xcode
+        run: python3 scripts/select_xcode.py
+      - name: Validate source package
+        run: python3 scripts/verify_project.py
+      - name: Test release validation tools
+        run: python3 -B scripts/test_release_tools.py
+      - name: Validate paper template catalog
+        run: python3 -B scripts/test_paper_catalog.py
+      - name: Build offline preview
+        run: python3 -B scripts/build_paper_preview.py
+      - name: Test offline preview controls
+        run: node scripts/test_paper_preview.js
+      - name: Run iOS tests
+        run: bash scripts/ci-test.sh
+      - name: Build Release for iOS device without signing
+        run: xcodebuild -project NotesByBlum.xcodeproj -scheme NotesByBlum -configuration Release -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO build
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: build/*.xcresult
+          if-no-files-found: ignore
