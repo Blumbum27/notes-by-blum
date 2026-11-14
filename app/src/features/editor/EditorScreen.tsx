@@ -1,4 +1,4 @@
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, usePreventZoomTransitionDismissal } from 'expo-router';
 import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { Alert, View, useWindowDimensions } from 'react-native';
 import { Button, ColorPicker, Host, HStack, Menu } from '@expo/ui/swift-ui';
@@ -22,6 +22,8 @@ export type EditorFrameProps = {
 
 export default function NotebookScreen({ frame }: { frame: ComponentType<EditorFrameProps> }) {
   const { id } = useLocalSearchParams<{ id: string }>();
+  // Закрытие жестом конфликтует с рисованием: выход из блокнота — кнопкой «Домой».
+  usePreventZoomTransitionDismissal();
   return <NotebookEditor key={id} id={id} frame={frame} />;
 }
 
@@ -55,7 +57,7 @@ function NotebookEditor({ id, frame: EditorShell }: { id: string; frame: Compone
   }, []);
   useEffect(() => {
     let current = true;
-    repository.readNotebook(id).then(value => { if (current) setNotebook(value); }).catch(() => Alert.alert('Не удалось открыть блокнот', 'Вернитесь в библиотеку и попробуйте снова.'));
+    repository.readNotebook(id).then(value => { if (current) setNotebook(value); }).catch(() => { if (current) Alert.alert('Не удалось открыть блокнот', 'Вернитесь в библиотеку и попробуйте снова.'); });
     return () => { current = false; currentNotebook.current = undefined; };
   }, [id]);
   const send = (action: CanvasCommand['action']) => setCommand({ id: Date.now(), action });
@@ -95,7 +97,6 @@ function NotebookEditor({ id, frame: EditorShell }: { id: string; frame: Compone
   };
   if (!notebook) return null;
   return <EditorShell notebook={notebook} onNotebookChange={value => { currentNotebook.current = value; setNotebook(value); }} onBeforeAction={saveCanvases} activePage={active} readOnly={readOnly} onReadOnlyChange={setReadOnly} onSelectPage={setActive} onClearPage={() => send('clear')} toolbar={<EditorTools state={tools} onChange={changeTools} />}><View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, backgroundColor: '#E8EAEE' }}>
-    <Stack.Screen options={{ headerShown: false }} />
     {!readOnly && <><EditorToolPanel state={{ ...tools, eraserAutoReturn: settings.eraserAutoReturn }} onChange={changeTools} onClear={() => Alert.alert('Очистить страницу?', 'Все рукописные штрихи на странице будут удалены.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: () => send('clear') }])} />
     <EditorHistory {...history} onUndo={() => send('undo')} onRedo={() => send('redo')} />
     {tools.tool === 'text' && <EditorTextFormat textFormat={textFormat} setTextFormat={setTextFormat} />}</>}

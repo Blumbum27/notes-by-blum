@@ -1,6 +1,6 @@
 import { BottomSheet, Button, Form, Host, HStack, Menu, Picker, Section, Spacer, Text as NativeText, TextField, VStack } from '@expo/ui/swift-ui';
 import { buttonStyle, padding, pickerStyle, tag } from '@expo/ui/swift-ui/modifiers';
-import { Stack, router, useFocusEffect } from 'expo-router';
+import { Link, Stack, router, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useCallback, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
@@ -70,8 +70,10 @@ export default function LibraryScreen() {
     if (selection) { setSelection(selection.includes(item.id) ? selection.filter(id => id !== item.id) : [...selection, item.id]); return; }
     if (section === 'trash') return;
     if (item.kind === 'folder') { setParentId(item.id); setSection('documents'); }
-    else router.push({ pathname: '/notebook/[id]', params: { id: item.id } });
   };
+  const preview = (item: LibraryItem, onPress?: () => void) => <Pressable accessibilityRole="button" accessibilityLabel={item.title} onPress={onPress} style={StyleSheet.flatten([styles.preview, list && styles.smallPreview, item.kind === 'notebook' && { backgroundColor: item.cover }, selection?.includes(item.id) && styles.selected])}>
+    {item.kind === 'notebook' && new File(repository.packageDirectory(item.id), 'thumbnails', 'cover.png').exists ? <Image source={{ uri: new File(repository.packageDirectory(item.id), 'thumbnails', 'cover.png').uri }} style={{ width: '100%', height: '100%' }} contentFit="contain" /> : <SymbolView name={item.kind === 'folder' ? 'folder.fill' : 'book.closed.fill'} tintColor={item.kind === 'folder' ? item.cover : '#FFFFFF'} size={list ? 44 : item.kind === 'folder' ? 110 : 48} />}
+  </Pressable>;
   return <View style={[styles.root, { paddingTop: insets.top + 112, paddingBottom: insets.bottom }]}>
     <Stack.Screen options={{ title: current?.title ?? (section === 'favorites' ? 'Избранное' : section === 'trash' ? 'Корзина' : 'Документы'), headerLargeTitle: true,
       headerSearchBarOptions: { placeholder: 'Поиск по названиям', onChangeText: event => setSearch(event.nativeEvent.text) },
@@ -96,9 +98,9 @@ export default function LibraryScreen() {
       <FlatList key={columns} numColumns={columns} data={visible} contentContainerStyle={styles.grid} keyExtractor={item => item.id}
         ListEmptyComponent={<View style={styles.empty}><Text style={styles.emptyTitle}>{search ? 'Ничего не найдено' : section === 'trash' ? 'Корзина пуста' : section === 'favorites' ? 'В избранном пока ничего нет' : 'Здесь пока нет документов'}</Text><Text style={styles.date}>{search ? 'Попробуйте другое название.' : section === 'documents' ? 'Создайте блокнот, папку или импортируйте файл.' : section === 'favorites' ? 'Добавляйте документы и папки через их меню.' : 'Удалённые документы появятся здесь.'}</Text></View>}
         renderItem={({ item }) => <View style={[styles.item, list && styles.listItem, { width: list ? '100%' : `${100 / columns}%` }]}>
-          <Pressable accessibilityRole="button" accessibilityLabel={item.title} onPress={() => open(item)} style={[styles.preview, list && styles.smallPreview, item.kind === 'notebook' && { backgroundColor: item.cover }, selection?.includes(item.id) && styles.selected]}>
-            {item.kind === 'notebook' && new File(repository.packageDirectory(item.id), 'thumbnails', 'cover.png').exists ? <Image source={{ uri: new File(repository.packageDirectory(item.id), 'thumbnails', 'cover.png').uri }} style={{ width: '100%', height: '100%' }} contentFit="contain" /> : <SymbolView name={item.kind === 'folder' ? 'folder.fill' : 'book.closed.fill'} tintColor={item.kind === 'folder' ? item.cover : '#FFFFFF'} size={list ? 44 : item.kind === 'folder' ? 110 : 48} />}
-          </Pressable>
+          {item.kind === 'notebook' && !selection && section !== 'trash'
+            ? <Link href={{ pathname: '/notebook/[id]', params: { id: item.id } }} asChild><Link.AppleZoom>{preview(item)}</Link.AppleZoom></Link>
+            : preview(item, () => open(item))}
           <View style={list ? { flex: 1 } : undefined}><Host ignoreSafeArea="all" style={{ height: 40, width: list ? 260 : 165 }}><Menu label={item.title} systemImage="chevron.down">
             {section === 'trash' ? <><Button label="Восстановить" onPress={() => void perform(() => repository.updateItem(item.id, { deletedAt: null }))} /><Button label="Удалить навсегда" role="destructive" onPress={() => Alert.alert('Удалить навсегда?', 'Восстановить документ будет невозможно.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: () => void perform(() => repository.deletePermanently(item.id)) }])} /></> : <>
               <Button label="Переименовать" onPress={() => rename(item)} /><Button label={item.favorite ? 'Убрать из избранного' : 'В избранное'} systemImage="star" onPress={() => void perform(() => repository.updateItem(item.id, { favorite: !item.favorite }))} />
