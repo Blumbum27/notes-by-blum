@@ -25,6 +25,7 @@ export function EditorToolPanel({ state, onChange, onClear }: Props & { onClear:
   const { width: windowWidth } = useWindowDimensions();
   const [penOpen, setPenOpen] = useState(false);
   const update = (patch: Partial<EditorToolState>) => onChange({ ...state, ...patch });
+  const choosePen = (tool: CanvasTool) => { update({ tool }); setPenOpen(false); };
   if (state.tool === 'lasso') return <Host style={{ height: 52, width: 260, alignSelf: 'center' }}><Menu label="Лассо"><Text>Произвольное выделение штрихов</Text></Menu></Host>;
   if (state.tool === 'image' || state.tool === 'text') return null;
   return <Host style={{ height: 58, width: Math.min(state.tool === 'eraser' ? 380 : 760, windowWidth - 24), alignSelf: 'center' }}><HStack spacing={8} modifiers={[padding({ all: 8 }), glassEffect()]}>
@@ -35,7 +36,7 @@ export function EditorToolPanel({ state, onChange, onClear }: Props & { onClear:
       <Button label={state.eraserAutoReturn ? 'Автовозврат: вкл.' : 'Автовозврат: выкл.'} onPress={() => update({ eraserAutoReturn: !state.eraserAutoReturn })} />
       <Button label="Очистить страницу" role="destructive" onPress={onClear} />
     </Menu> : <>
-      <Popover isPresented={penOpen} onIsPresentedChange={setPenOpen} attachmentAnchor="bottom" arrowEdge="top"><Popover.Trigger><Button label="Ручка" systemImage="pencil.tip" onPress={() => setPenOpen(true)} /></Popover.Trigger><Popover.Content><VStack spacing={16} modifiers={[padding({ all: 20 })]}><Text>Тип ручки</Text><Button label="Перьевая ручка" onPress={() => update({ tool: 'fountain' })} /><Button label="Шариковая ручка" onPress={() => update({ tool: 'monoline' })} /><Button label="Ручка-кисть" onPress={() => update({ tool: 'pen' })} /></VStack></Popover.Content></Popover>
+      <Popover isPresented={penOpen} onIsPresentedChange={setPenOpen} attachmentAnchor="bottom" arrowEdge="top"><Popover.Trigger><Button label="Ручка" systemImage="pencil.tip" onPress={() => setPenOpen(true)} /></Popover.Trigger><Popover.Content><VStack spacing={16} modifiers={[padding({ all: 20 })]}><Text>Тип ручки</Text><Button label="Перьевая ручка" onPress={() => choosePen('fountain')} /><Button label="Шариковая ручка" onPress={() => choosePen('monoline')} /><Button label="Ручка-кисть" onPress={() => choosePen('pen')} /></VStack></Popover.Content></Popover>
       <Button label="Карандаш" systemImage="pencil" onPress={() => update({ tool: 'pencil' })} />
       <Button label="Маркер" systemImage="highlighter" onPress={() => update({ tool: 'marker', width: 12 })} />
     </>}
