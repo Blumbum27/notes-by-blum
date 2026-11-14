@@ -6,6 +6,20 @@ import PDFKit
 public final class NotesRenderingModule: Module {
   public func definition() -> ModuleDefinition {
     Name("NotesRendering")
+    AsyncFunction("shareImages") { (path: String, json: String, ids: [String], background: Bool, annotations: Bool) in
+      let renderer = try NotebookRenderer(path: path, json: json)
+      let urls = try renderer.images(ids: ids, background: background, annotations: annotations)
+      guard let controller = self.appContext?.utilities?.currentViewController() else {
+        throw NSError(domain: "NotesRendering", code: 1)
+      }
+      let sheet = UIActivityViewController(activityItems: urls, applicationActivities: nil)
+      sheet.completionWithItemsHandler = { _, _, _, _ in
+        if let first = urls.first { try? FileManager.default.removeItem(at: first.deletingLastPathComponent()) }
+      }
+      sheet.popoverPresentationController?.sourceView = controller.view
+      sheet.popoverPresentationController?.sourceRect = CGRect(x: controller.view.bounds.maxX - 64, y: 80, width: 1, height: 1)
+      controller.present(sheet, animated: true)
+    }.runOnQueue(.main)
     AsyncFunction("thumbnails") { (path: String, json: String) -> [String] in
       let renderer = try NotebookRenderer(path: path, json: json)
       return try renderer.thumbnails()
@@ -150,5 +164,22 @@ private final class NotebookRenderer {
     }
     if let failure { throw failure }
     return url
+  }
+  func images(ids: [String], background: Bool, annotations: Bool) throws -> [URL] {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let title = (manifest["title"] as? String ?? "Блокнот").replacingOccurrences(of: "/", with: "-")
+    return try pages.enumerated().filter { ids.isEmpty || ids.contains($0.element["id"] as? String ?? "") }.map { index, page in
+      var failure: Error?
+      let format = UIGraphicsImageRendererFormat(); format.scale = 2
+      let image = UIGraphicsImageRenderer(size: outputSize(page), format: format).image { _ in
+        do { try draw(page, background: background, annotations: annotations) } catch { failure = error }
+      }
+      if let failure { throw failure }
+      let url = folder.appendingPathComponent("\(title)-\(index + 1).png")
+      guard let data = image.pngData() else { throw NSError(domain: "NotesRendering", code: 3) }
+      try data.write(to: url, options: .atomic)
+      return url
+    }
   }
 }
