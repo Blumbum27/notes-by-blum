@@ -4,13 +4,14 @@ import type { PageBackground, PageObject } from '../../src/shared/documents/type
 
 export type CanvasTool = 'pen' | 'monoline' | 'fountain' | 'marker' | 'pencil' | 'eraser' | 'lasso' | 'text' | 'image';
 export type CanvasCommand = { id: number; action: 'undo' | 'redo' | 'clear' | 'save' };
+export type TextFormat = Partial<Extract<PageObject, { kind: 'text' }>> & { underline?: boolean; strikethrough?: boolean };
 export type NotesCanvasProps = ViewProps & {
   filePath: string;
   /** Относительные asset-пути разрешаются относительно packagePath. PDF page — с нуля. */
   packagePath?: string;
   background?: PageBackground;
   objects?: PageObject[];
-  textFormat?: Partial<Extract<PageObject, { kind: 'text' }>>;
+  textFormat?: TextFormat;
   pageWidth?: number;
   pageHeight?: number;
   tool: CanvasTool;

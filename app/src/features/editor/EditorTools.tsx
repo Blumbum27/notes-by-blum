@@ -1,4 +1,6 @@
-import { Button, ColorPicker, Host, HStack, Menu } from '@expo/ui/swift-ui';
+import { Button, ColorPicker, Host, HStack, Menu, Popover, VStack, Text } from '@expo/ui/swift-ui';
+import { useWindowDimensions } from 'react-native';
+import { useState } from 'react';
 import { buttonStyle, disabled, padding } from '@expo/ui/swift-ui/modifiers';
 import type { CanvasTool } from '../../../modules/notes-canvas';
 
@@ -20,22 +22,24 @@ export function EditorTools({ state, onChange }: Props) {
 }
 
 export function EditorToolPanel({ state, onChange, onClear }: Props & { onClear: () => void }) {
+  const { width: windowWidth } = useWindowDimensions();
+  const [penOpen, setPenOpen] = useState(false);
   const update = (patch: Partial<EditorToolState>) => onChange({ ...state, ...patch });
   if (state.tool === 'lasso') return null;
   if (state.tool === 'image' || state.tool === 'text') return null;
-  return <Host style={{ height: 58, width: 760, alignSelf: 'center' }}><HStack spacing={10} modifiers={[padding({ all: 8 })]}>
+  return <Host style={{ height: 58, width: Math.min(900, windowWidth - 24), alignSelf: 'center' }}><HStack spacing={8} modifiers={[padding({ all: 8 })]}>
     {state.tool === 'eraser' ? <Menu label={state.eraserMode === 'vector' ? 'Для штрихов' : state.width < 10 ? 'Точный' : 'Стандартный'}>
       <Button label="Точный" onPress={() => update({ eraserMode: 'bitmap', width: 5 })} />
       <Button label="Стандартный" onPress={() => update({ eraserMode: 'bitmap', width: 20 })} />
       <Button label="Для штрихов" onPress={() => update({ eraserMode: 'vector' })} />
       <Button label="Очистить страницу" role="destructive" onPress={onClear} />
     </Menu> : <>
-      <Menu label="Ручка" systemImage="pencil.tip"><Button label="Перьевая ручка" onPress={() => update({ tool: 'fountain' })} /><Button label="Шариковая ручка" onPress={() => update({ tool: 'monoline' })} /><Button label="Ручка-кисть" onPress={() => update({ tool: 'pen' })} /></Menu>
+      <Popover isPresented={penOpen} onIsPresentedChange={setPenOpen} attachmentAnchor="bottom" arrowEdge="top"><Popover.Trigger><Button label="Ручка" systemImage="pencil.tip" onPress={() => setPenOpen(true)} /></Popover.Trigger><Popover.Content><VStack spacing={16} modifiers={[padding({ all: 20 })]}><Text>Тип ручки</Text><Button label="Перьевая ручка" onPress={() => update({ tool: 'fountain' })} /><Button label="Шариковая ручка" onPress={() => update({ tool: 'monoline' })} /><Button label="Ручка-кисть" onPress={() => update({ tool: 'pen' })} /></VStack></Popover.Content></Popover>
       <Button label="Карандаш" systemImage="pencil" onPress={() => update({ tool: 'pencil' })} />
       <Button label="Маркер" systemImage="highlighter" onPress={() => update({ tool: 'marker', width: 12 })} />
     </>}
     {(state.tool === 'eraser' ? [5, 20, 40] : state.tool === 'marker' ? [8, 12, 20] : [1, 3, 6]).map(width => <Button key={width} label={`${width}`} onPress={() => update({ width })} modifiers={[buttonStyle(state.width === width ? 'borderedProminent' : 'bordered')]} />)}
-    {state.tool !== 'eraser' && <ColorPicker label="Цвет" selection={state.color} onSelectionChange={color => update({ color })} />}
+    {state.tool !== 'eraser' && <><Menu label="Цвета">{['#151515', '#FFFFFF', '#006F83', '#D57A00', '#E00000', '#FFEE00'].map(color => <Button key={color} label={color === '#151515' ? 'Чёрный' : color === '#FFFFFF' ? 'Белый' : color === '#006F83' ? 'Синий' : color === '#D57A00' ? 'Оранжевый' : color === '#E00000' ? 'Красный' : 'Жёлтый'} onPress={() => update({ color })} />)}</Menu><ColorPicker label="" selection={state.color} onSelectionChange={color => update({ color })} /></>}
   </HStack></Host>;
 }
 

@@ -46,6 +46,13 @@ extension NotesCanvasView {
     if object["italic"] as? Bool == true { traits.insert(.traitItalic) }
     if let descriptor = font.fontDescriptor.withSymbolicTraits(traits) { font = UIFont(descriptor: descriptor, size: size) }
     text.font = font; text.textColor = UIColor(noteHex: object["color"] as? String ?? "#151515")
+    var attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: text.textColor ?? UIColor.label]
+    if object["underline"] as? Bool == true { attributes[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+    if object["strikethrough"] as? Bool == true { attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+    let selection = text.selectedRange
+    text.attributedText = NSAttributedString(string: text.text ?? "", attributes: attributes)
+    text.typingAttributes = attributes
+    text.selectedRange = selection
     text.textAlignment = object["alignment"] as? String == "center" ? .center : object["alignment"] as? String == "right" ? .right : .left
   }
   func applyTextFormat() { if let text = editingText { format(text, textFormat); textViewDidChange(text) } }

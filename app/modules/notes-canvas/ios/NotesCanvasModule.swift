@@ -12,7 +12,7 @@ public final class NotesCanvasModule: Module {
       Prop("textFormat") { (view, value: [String: Any]) in view.textFormat = value; view.applyTextFormat() }
       Prop("pageWidth") { (view, value: Double) in view.pageSize.width = value; view.setNeedsLayout() }
       Prop("pageHeight") { (view, value: Double) in view.pageSize.height = value; view.setNeedsLayout() }
-      Prop("packagePath") { (view, value: String) in view.packageURL = URL(string: value); view.updateBackground() }
+      Prop("packagePath") { (view, value: String) in view.packageURL = URL(string: value); view.updateBackground(); view.setObjects(view.pageObjects) }
       Prop("background") { (view, value: [String: Any]) in view.pageBackground = value; view.updateBackground() }
       Prop("filePath") { (view, value: String) in view.load(value) }
       Prop("tool") { (view, value: String) in view.toolName = value; view.updateTool() }
@@ -29,7 +29,7 @@ public final class NotesCanvasModule: Module {
         switch value["action"] as? String {
         case "undo": view.canvas.undoManager?.undo()
         case "redo": view.canvas.undoManager?.redo()
-        case "clear": view.canvas.drawing = PKDrawing(); view.persist()
+        case "clear": view.clearDrawing()
         case "save": view.persist()
         default: break
         }
@@ -85,7 +85,10 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
     canvas.delegate = self
     setDrawingPolicy(false)
     updateTool()
+    NotificationCenter.default.addObserver(self, selector: #selector(saveBeforeBackground), name: UIApplication.willResignActiveNotification, object: nil)
   }
+
+  @objc private func saveBeforeBackground() { editingText?.resignFirstResponder(); persist() }
 
   override func layoutSubviews() {
     super.layoutSubviews()
@@ -147,7 +150,23 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
     do {
       try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       try canvas.drawing.dataRepresentation().write(to: url, options: .atomic)
-    } catch { onError(["message": "Не удалось сохранить страницу: \(error.localizedDescription)"]) }
+      let renderer = UIGraphicsImageRenderer(size: pageSize)
+      let image = renderer.image { context in content.layer.render(in: context.cgContext) }
+      let thumbnail = url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("thumbnails/\(url.deletingPathExtension().lastPathComponent)-canvas.png")
+      try FileManager.default.createDirectory(at: thumbnail.deletingLastPathComponent(), withIntermediateDirectories: true)
+      try image.pngData()?.write(to: thumbnail, options: .atomic)
+    } catch { onError(["message": "Не удалось сохранить страницу. Не закрывайте документ и повторите попытку."]) }
+  }
+
+  func clearDrawing() {
+    replaceDrawing(PKDrawing())
+    persist()
+  }
+
+  private func replaceDrawing(_ drawing: PKDrawing) {
+    let previous = canvas.drawing
+    canvas.undoManager?.registerUndo(withTarget: self) { target in target.replaceDrawing(previous); target.persist(); target.notify() }
+    canvas.drawing = drawing
   }
 
   func notify() {
@@ -163,7 +182,7 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
   func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) { persist(); notify(); onToolEnd([:]) }
   override func didMoveToWindow() {
     super.didMoveToWindow()
-    if window == nil { saveWork?.cancel(); persist() }
+    if window == nil { editingText?.resignFirstResponder(); saveWork?.cancel(); persist() }
   }
   func updateBackground() {
     backgroundImage.image = nil

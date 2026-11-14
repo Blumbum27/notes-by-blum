@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, ScrollView, View, type ViewToken } from 'react-native';
+import { Alert, FlatList, Image, ScrollView, View, type ViewToken } from 'react-native';
 import { NotesCanvas, type CanvasCommand } from '../../../modules/notes-canvas';
 import * as repository from '../../shared/documents/repository';
 import type { NotebookManifest, NotebookPage, PageObject } from '../../shared/documents/types';
@@ -34,7 +34,7 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
       const ratio = item.paper.size === 'Letter' ? 11 / 8.5 : Math.SQRT2;
       const height = width * (item.paper.orientation === 'portrait' ? ratio : 1 / ratio);
       const short = item.paper.size === 'Letter' ? 612 : 595;
-      return <ScrollView style={{ width, height, backgroundColor: '#fff' }} minimumZoomScale={1} maximumZoomScale={4} scrollEnabled={false} pinchGestureEnabled>
+      return <ScrollView style={{ width, height, backgroundColor: '#fff' }} minimumZoomScale={1} maximumZoomScale={4} scrollEnabled pinchGestureEnabled nestedScrollEnabled>
         <View style={{ width, height }}>
         {Math.abs(index - visible) <= 1 && <NotesCanvas style={{ width, height }}
           filePath={repository.drawingPath(props.notebook.id, item.id)} packagePath={repository.packageDirectory(props.notebook.id).uri}
@@ -47,6 +47,7 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
           command={index === props.activePage ? props.command : undefined}
           onDrawingChange={event => { if (index === latest.current.activePage) props.onHistoryChange(event.nativeEvent); }}
           onError={event => Alert.alert('Ошибка страницы', event.nativeEvent.message)} />}
+        {Math.abs(index - visible) > 1 && <Image style={{ width, height }} source={{ uri: `${repository.packageDirectory(props.notebook.id).uri}/thumbnails/${item.id}-canvas.png` }} resizeMode="contain" />}
         </View></ScrollView>;
     }} />;
 }
