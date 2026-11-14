@@ -22,6 +22,7 @@ export default function NotebookScreen() {
   const dimensions = useWindowDimensions();
   const pendingSave = useRef<Promise<unknown>>(Promise.resolve());
   const presets = useRef<Partial<Record<CanvasToolName, EditorToolState>>>({});
+  const previousWriting = useRef<EditorToolState>({ tool: 'pen', color: '#151515', width: 3, eraserMode: 'bitmap' });
   const currentNotebook = useRef<NotebookManifest | undefined>(undefined);
   useEffect(() => { currentNotebook.current = notebook; }, [notebook]);
   useEffect(() => {
@@ -46,6 +47,7 @@ export default function NotebookScreen() {
     pendingSave.current = pendingSave.current.then(() => repository.saveNotebook(next)).catch(() => Alert.alert('Не удалось сохранить объекты', 'Не закрывайте документ и попробуйте снова.'));
   };
   const changeTools = (next: EditorToolState) => {
+    if (next.tool === 'eraser' && ['pen', 'monoline', 'fountain', 'marker', 'pencil'].includes(tools.tool)) previousWriting.current = tools;
     if (next.tool !== tools.tool) {
       presets.current[tools.tool] = tools;
       next = presets.current[next.tool] ?? next;
@@ -75,7 +77,7 @@ export default function NotebookScreen() {
     <EditorToolPanel state={tools} onChange={changeTools} onClear={() => Alert.alert('Очистить страницу?', 'Все рукописные штрихи на странице будут удалены.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: () => send('clear') }])} />
     <EditorHistory {...history} onUndo={() => send('undo')} onRedo={() => send('redo')} />
     {tools.tool === 'text' && <EditorTextFormat textFormat={textFormat} setTextFormat={setTextFormat} />}
-    <EditorPageRibbon notebook={notebook} tools={tools} readOnly={false} fingerDrawing={false} width={dimensions.width} activePage={active} command={command} onActivePageChange={setActive} onHistoryChange={setHistory} textFormat={textFormat} onObjectsChange={saveObjects} />
+    <EditorPageRibbon notebook={notebook} tools={tools} readOnly={false} fingerDrawing={false} width={dimensions.width} activePage={active} command={command} onActivePageChange={setActive} onHistoryChange={setHistory} textFormat={textFormat} onObjectsChange={saveObjects} onToolEnd={() => { if (tools.tool === 'eraser' && tools.eraserAutoReturn) changeTools(previousWriting.current); }} />
   </View>;
 }
 

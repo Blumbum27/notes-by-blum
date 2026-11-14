@@ -5,7 +5,7 @@ import { buttonStyle, disabled, padding } from '@expo/ui/swift-ui/modifiers';
 import type { CanvasTool } from '../../../modules/notes-canvas';
 
 export type EditorToolState = {
-  tool: CanvasTool; color: string; width: number; eraserMode: 'bitmap' | 'vector';
+  tool: CanvasTool; color: string; width: number; eraserMode: 'bitmap' | 'vector'; eraserAutoReturn?: boolean;
 };
 type Props = { state: EditorToolState; onChange: (state: EditorToolState) => void };
 
@@ -25,13 +25,14 @@ export function EditorToolPanel({ state, onChange, onClear }: Props & { onClear:
   const { width: windowWidth } = useWindowDimensions();
   const [penOpen, setPenOpen] = useState(false);
   const update = (patch: Partial<EditorToolState>) => onChange({ ...state, ...patch });
-  if (state.tool === 'lasso') return null;
+  if (state.tool === 'lasso') return <Host style={{ height: 52, width: 260, alignSelf: 'center' }}><Menu label="Лассо"><Text>Произвольное выделение штрихов</Text></Menu></Host>;
   if (state.tool === 'image' || state.tool === 'text') return null;
   return <Host style={{ height: 58, width: Math.min(900, windowWidth - 24), alignSelf: 'center' }}><HStack spacing={8} modifiers={[padding({ all: 8 })]}>
     {state.tool === 'eraser' ? <Menu label={state.eraserMode === 'vector' ? 'Для штрихов' : state.width < 10 ? 'Точный' : 'Стандартный'}>
       <Button label="Точный" onPress={() => update({ eraserMode: 'bitmap', width: 5 })} />
       <Button label="Стандартный" onPress={() => update({ eraserMode: 'bitmap', width: 20 })} />
       <Button label="Для штрихов" onPress={() => update({ eraserMode: 'vector' })} />
+      <Button label={state.eraserAutoReturn ? 'Автовозврат: вкл.' : 'Автовозврат: выкл.'} onPress={() => update({ eraserAutoReturn: !state.eraserAutoReturn })} />
       <Button label="Очистить страницу" role="destructive" onPress={onClear} />
     </Menu> : <>
       <Popover isPresented={penOpen} onIsPresentedChange={setPenOpen} attachmentAnchor="bottom" arrowEdge="top"><Popover.Trigger><Button label="Ручка" systemImage="pencil.tip" onPress={() => setPenOpen(true)} /></Popover.Trigger><Popover.Content><VStack spacing={16} modifiers={[padding({ all: 20 })]}><Text>Тип ручки</Text><Button label="Перьевая ручка" onPress={() => update({ tool: 'fountain' })} /><Button label="Шариковая ручка" onPress={() => update({ tool: 'monoline' })} /><Button label="Ручка-кисть" onPress={() => update({ tool: 'pen' })} /></VStack></Popover.Content></Popover>
