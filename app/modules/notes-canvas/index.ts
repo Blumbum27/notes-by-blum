@@ -1,4 +1,4 @@
-import { requireNativeView } from 'expo';
+import { requireNativeView, requireNativeModule } from 'expo';
 import type { ViewProps } from 'react-native';
 import type { PageBackground, PageObject } from '../../src/shared/documents/types';
 
@@ -14,6 +14,7 @@ export type NotesCanvasProps = ViewProps & {
   textFormat?: TextFormat;
   pageWidth?: number;
   pageHeight?: number;
+  rotation?: number;
   tool: CanvasTool;
   color: string;
   strokeWidth: number;
@@ -31,3 +32,4 @@ export type NotesCanvasProps = ViewProps & {
 };
 
 export const NotesCanvas = requireNativeView<NotesCanvasProps>('NotesCanvas');
+export const saveAllCanvases = () => requireNativeModule<{ saveAll: () => Promise<boolean> }>('NotesCanvas').saveAll();

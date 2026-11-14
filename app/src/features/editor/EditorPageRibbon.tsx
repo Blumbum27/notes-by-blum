@@ -13,8 +13,6 @@ export type EditorPageRibbonProps = {
   textFormat?: Partial<Extract<PageObject, { kind: 'text' }>>;
   onObjectsChange: (pageId: string, objects: PageObject[]) => void;
   onToolEnd?: () => void;
-  onSaved?: (pageId: string, id: number, success: boolean) => void;
-  onLivePages?: (ids: string[]) => void;
 };
 
 /** Только текущая страница и соседи содержат живой PKCanvasView. */
@@ -23,8 +21,6 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
   const list = useRef<FlatList<NotebookPage>>(null);
   const latest = useRef(props);
   useEffect(() => { latest.current = props; }, [props]);
-  const { onLivePages, notebook } = props;
-  useEffect(() => { onLivePages?.(notebook.pages.filter((_, index) => Math.abs(index - visible) <= 1).map(page => page.id)); }, [visible, notebook.pages, onLivePages]);
   useEffect(() => { list.current?.scrollToIndex({ index: props.activePage, animated: false }); }, [props.activePage]);
   const viewability = useCallback(({ viewableItems }: { viewableItems: ViewToken<NotebookPage>[] }) => {
     const index = viewableItems[0]?.index;
@@ -39,18 +35,18 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
     contentContainerStyle={{ padding: 24, gap: 18, alignItems: 'center' }}
     renderItem={({ item, index }) => {
       const ratio = item.paper.size === 'Letter' ? 11 / 8.5 : Math.SQRT2;
-      const height = width * (item.paper.orientation === 'portrait' ? ratio : 1 / ratio);
+      const sideways = item.rotation % 180 !== 0;
+      const height = width * ((item.paper.orientation === 'portrait') !== sideways ? ratio : 1 / ratio);
       const short = item.paper.size === 'Letter' ? 612 : 595;
       return <ScrollView style={{ width, height, backgroundColor: '#fff', flexGrow: 0 }} contentContainerStyle={{ width, height }} minimumZoomScale={1} maximumZoomScale={4} scrollEnabled pinchGestureEnabled nestedScrollEnabled>
         <View style={{ width, height }}>
         {Math.abs(index - visible) <= 1 && <NotesCanvas style={{ width, height }}
           filePath={repository.drawingPath(props.notebook.id, item.id)} packagePath={repository.packageDirectory(props.notebook.id).uri}
-          background={item.background} objects={item.objects} tool={props.tools.tool} color={props.tools.color}
+           rotation={item.rotation} background={item.background} objects={item.objects} tool={props.tools.tool} color={props.tools.color}
           pageWidth={item.paper.orientation === 'portrait' ? short : short * ratio}
           pageHeight={item.paper.orientation === 'portrait' ? short * ratio : short}
            textFormat={props.textFormat} onObjectsChange={event => props.onObjectsChange(item.id, event.nativeEvent.objects)}
             onToolEnd={props.onToolEnd}
-            onSaved={event => props.onSaved?.(item.id, event.nativeEvent.id, event.nativeEvent.success)}
           strokeWidth={props.tools.width} eraserMode={props.tools.eraserMode} pattern={item.paper.pattern}
           paperColor={item.paper.color === 'white' ? '#FFFFFF' : '#FFF6D5'} readOnly={props.readOnly} fingerDrawing={props.fingerDrawing}
            command={props.command?.action === 'save' || index === props.activePage ? props.command : undefined}

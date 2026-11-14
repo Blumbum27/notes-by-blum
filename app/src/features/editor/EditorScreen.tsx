@@ -5,7 +5,7 @@ import { Button, ColorPicker, Host, HStack, Menu } from '@expo/ui/swift-ui';
 import { glassEffect, labelsHidden, padding } from '@expo/ui/swift-ui/modifiers';
 import * as ImagePicker from 'expo-image-picker';
 import { File, Paths } from 'expo-file-system';
-import type { CanvasCommand, TextFormat } from '../../../modules/notes-canvas';
+import { saveAllCanvases, type CanvasCommand, type TextFormat } from '../../../modules/notes-canvas';
 import { renderThumbnails } from '../../../modules/notes-canvas/rendering';
 import * as repository from '../../shared/documents/repository';
 import type { NotebookManifest, PageObject } from '../../shared/documents/types';
@@ -39,15 +39,8 @@ function NotebookEditor({ id, frame: EditorShell }: { id: string; frame: Compone
   const presets = useRef<Partial<Record<EditorToolState['tool'], EditorToolState>>>({});
   const previousWriting = useRef<EditorToolState>({ tool: 'pen', color: '#151515', width: 3, eraserMode: 'bitmap' });
   const currentNotebook = useRef<NotebookManifest | undefined>(undefined);
-  const livePages = useRef<string[]>([]);
-  const saveRequest = useRef<{ id: number; remaining: Set<string>; resolve: () => void; reject: (error: Error) => void } | undefined>(undefined);
   const saveCanvases = async () => {
-    const id = Date.now();
-    await new Promise<void>((resolve, reject) => {
-      if (!livePages.current.length) { resolve(); return; }
-      saveRequest.current = { id, remaining: new Set(livePages.current), resolve, reject };
-      setCommand({ id, action: 'save' });
-    });
+    if (!await saveAllCanvases()) throw new Error('Не удалось сохранить страницы');
     await pendingSave.current;
     const document = currentNotebook.current;
     if (document) await renderThumbnails(repository.packageDirectory(document.id).uri, document);
@@ -106,13 +99,7 @@ function NotebookEditor({ id, frame: EditorShell }: { id: string; frame: Compone
     {!readOnly && <><EditorToolPanel state={{ ...tools, eraserAutoReturn: settings.eraserAutoReturn }} onChange={changeTools} onClear={() => Alert.alert('Очистить страницу?', 'Все рукописные штрихи на странице будут удалены.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: () => send('clear') }])} />
     <EditorHistory {...history} onUndo={() => send('undo')} onRedo={() => send('redo')} />
     {tools.tool === 'text' && <EditorTextFormat textFormat={textFormat} setTextFormat={setTextFormat} />}</>}
-    <EditorPageRibbon notebook={notebook} tools={tools} readOnly={readOnly} fingerDrawing={settings.fingerDrawing} horizontal={settings.horizontal} width={width} activePage={active} command={command} onLivePages={ids => { livePages.current = ids; }} onSaved={(pageId, id, success) => {
-      const request = saveRequest.current;
-      if (!request || request.id !== id) return;
-      if (!success) { saveRequest.current = undefined; request.reject(new Error('Не удалось сохранить страницу')); return; }
-      request.remaining.delete(pageId);
-      if (!request.remaining.size) { saveRequest.current = undefined; request.resolve(); }
-    }} onActivePageChange={setActive} onHistoryChange={setHistory} textFormat={textFormat} onObjectsChange={saveObjects} onToolEnd={() => { if (tools.tool === 'eraser' && settings.eraserAutoReturn) changeTools(previousWriting.current); }} />
+    <EditorPageRibbon notebook={notebook} tools={tools} readOnly={readOnly} fingerDrawing={settings.fingerDrawing} horizontal={settings.horizontal} width={width} activePage={active} command={command} onActivePageChange={index => { void saveCanvases().then(() => setActive(index)).catch(() => Alert.alert('Не удалось сохранить страницу')); }} onHistoryChange={setHistory} textFormat={textFormat} onObjectsChange={saveObjects} onToolEnd={() => { if (tools.tool === 'eraser' && settings.eraserAutoReturn) changeTools(previousWriting.current); }} />
   </View></EditorShell>;
 }
 

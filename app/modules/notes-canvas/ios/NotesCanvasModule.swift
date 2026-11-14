@@ -6,12 +6,21 @@ import PDFKit
 public final class NotesCanvasModule: Module {
   public func definition() -> ModuleDefinition {
     Name("NotesCanvas")
+    AsyncFunction("saveAll") { () -> Bool in
+      var success = true
+      for view in NotesCanvasView.instances.allObjects {
+        view.editingText?.resignFirstResponder()
+        if !view.persist() { success = false }
+      }
+      return success
+    }.runOnQueue(.main)
     View(NotesCanvasView.self) {
       Events("onDrawingChange", "onError", "onObjectsChange", "onToolEnd", "onSaved")
       Prop("objects") { (view, value: [[String: Any]]) in view.setObjects(value) }
       Prop("textFormat") { (view, value: [String: Any]) in view.textFormat = value; view.applyTextFormat() }
       Prop("pageWidth") { (view, value: Double) in view.pageSize.width = value; view.setNeedsLayout() }
       Prop("pageHeight") { (view, value: Double) in view.pageSize.height = value; view.setNeedsLayout() }
+      Prop("rotation") { (view, value: Double) in view.rotation = value; view.setNeedsLayout() }
       Prop("packagePath") { (view, value: String) in view.packageURL = URL(string: value); view.updateBackground(); view.setObjects(view.pageObjects) }
       Prop("background") { (view, value: [String: Any]) in view.pageBackground = value; view.updateBackground() }
       Prop("filePath") { (view, value: String) in view.load(value) }
@@ -42,6 +51,8 @@ public final class NotesCanvasModule: Module {
 }
 
 final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate, UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate {
+  static let instances = NSHashTable<NotesCanvasView>.weakObjects()
+  var rotation = 0.0
   let content = UIView()
   var pageSize = CGSize(width: 595, height: 842)
   let canvas = PKCanvasView()
@@ -72,6 +83,7 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
+    Self.instances.add(self)
     addSubview(content)
     content.addSubview(paper)
     content.addSubview(backgroundImage)
@@ -99,9 +111,10 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
     content.frame = CGRect(origin: .zero, size: pageSize)
     for view in [paper, backgroundImage, canvas, objectLayer] { view.frame = content.bounds }
     canvas.contentSize = pageSize
-    let scale = bounds.width / pageSize.width
-    content.transform = CGAffineTransform(scaleX: scale, y: scale)
-    content.frame.origin = .zero
+    let sideways = Int(rotation) % 180 != 0
+    let scale = bounds.width / (sideways ? pageSize.height : pageSize.width)
+    content.transform = CGAffineTransform(rotationAngle: rotation * .pi / 180).scaledBy(x: scale, y: scale)
+    content.center = CGPoint(x: bounds.midX, y: bounds.midY)
   }
 
   func setDrawingPolicy(_ finger: Bool) {
