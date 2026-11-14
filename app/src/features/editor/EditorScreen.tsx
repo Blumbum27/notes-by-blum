@@ -24,6 +24,8 @@ export type EditorFrameProps = {
   onBeforeAction: () => Promise<void>; activePage: number; readOnly: boolean;
   onReadOnlyChange: (value: boolean) => void; onSelectPage: (index: number) => void;
   onClearPage: () => void; onClearPageAt?: (index: number) => void; onEraseElements: (kinds: ElementKind[]) => void;
+  /** Меняется, когда пользователь потянул за последнюю страницу: рамка добавляет страницу в конец по её образцу. */
+  appendPageRequest?: number;
   toolbar: React.ReactNode; children: React.ReactNode;
 };
 
@@ -50,6 +52,7 @@ function NotebookEditor({ initial, frame: EditorShell }: { initial: NotebookMani
   const [textHint, setTextHint] = useState(true);
   const [active, setActive] = useState(0);
   const [scrollRequest, setScrollRequest] = useState<{ index: number; id: number }>();
+  const [appendPageRequest, setAppendPageRequest] = useState<number>();
   const [ruler, setRuler] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
   const [width, setWidth] = useState(0);
@@ -196,12 +199,13 @@ function NotebookEditor({ initial, frame: EditorShell }: { initial: NotebookMani
     if (!document || !pageId) return;
     void saveCanvases(pageId).catch(() => Alert.alert('Не удалось очистить страницу', 'Повторите попытку.'));
   };
-  return <EditorShell notebook={notebook} thumbnailRevision={thumbnailRevision} onNotebookChange={value => { currentNotebook.current = value; setNotebook(value); saveInBackground(); }} onBeforeAction={saveCanvases} activePage={active} readOnly={readOnly} onReadOnlyChange={setReadOnly} onSelectPage={selectPage} onClearPage={() => clearPageAt(active)} onClearPageAt={clearPageAt} onEraseElements={eraseElements}
+  return <EditorShell notebook={notebook} thumbnailRevision={thumbnailRevision} onNotebookChange={value => { currentNotebook.current = value; setNotebook(value); saveInBackground(); }} onBeforeAction={saveCanvases} activePage={active} readOnly={readOnly} onReadOnlyChange={setReadOnly} onSelectPage={selectPage} onClearPage={() => clearPageAt(active)} onClearPageAt={clearPageAt} onEraseElements={eraseElements} appendPageRequest={appendPageRequest}
     toolbar={<EditorTools state={tools} onChange={changeTools} ruler={ruler} onRulerChange={setRuler} onWriting={() => changeTools({ ...defaultPresets[lastWriting.current], ...presets.current[lastWriting.current] })} onRepeatEraser={() => setEraserPanel(value => !value)} />}>
     <View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, backgroundColor: '#EEF0EF' }}>
       <EditorPageRibbon notebook={notebook} tools={tools} readOnly={readOnly} fingerDrawing={settings.fingerDrawing} ruler={ruler && !readOnly} horizontal={settings.horizontal}
         insetTop={readOnly ? 12 : panelTop + 46 + 12} activePage={active} scrollRequest={scrollRequest} command={command} thumbnailRevision={thumbnailRevision}
         onVisibleCenter={center => { visibleCenterRequest.current?.(center); visibleCenterRequest.current = undefined; }} onActivePageChange={scrolledTo}
+        onPullAddPage={readOnly ? undefined : () => setAppendPageRequest(Date.now())}
         onHistoryChange={value => history.current?.update(value)} textFormat={textFormat} onObjectsChange={saveObjects} onTextEditingChange={textEditingChange}
         onToolEnd={() => { saveInBackground(); if (toolsRef.current.tool === 'eraser' && settings.eraserAutoReturn) changeTools(previousWriting.current); }} />
       {!readOnly && width > 0 && <>

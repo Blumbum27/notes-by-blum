@@ -5,7 +5,7 @@ import { GlassView } from 'expo-glass-effect';
 import { Directory, File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type PropsWithChildren, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PropsWithChildren, type ReactNode } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { documentImport } from '../../../modules/document-import';
@@ -37,6 +37,8 @@ export type EditorShellProps = PropsWithChildren<{
   onClearPageAt?: (index: number) => void;
   /** Removes chosen kinds of content from the active page. */
   onEraseElements?: (kinds: ElementKind[]) => void;
+  /** A new value appends a page after the last one, copying its paper (pull past the end of the document). */
+  appendPageRequest?: number;
 }>;
 
 export function EditorShell(props: EditorShellProps) {
@@ -88,6 +90,12 @@ export function EditorShell(props: EditorShellProps) {
       latest.current.onSelectPage?.(index);
     });
   }, [perform, save]);
+
+  const appendPageRequest = props.appendPageRequest;
+  useEffect(() => {
+    const count = latest.current.notebook?.pages.length ?? 0;
+    if (appendPageRequest && count) add(count, count - 1);
+  }, [appendPageRequest, add]);
 
   /** Inserts pages whose background is a copied image or PDF asset; the picker is shown before the save lock. */
   const insertBackgrounds = useCallback(async (position: AddPosition, pick: () => Promise<{ uri: string; extension: string; pages: number } | undefined>) => {

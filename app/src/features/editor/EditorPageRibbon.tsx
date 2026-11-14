@@ -1,5 +1,7 @@
+import * as Haptics from 'expo-haptics';
+import { SymbolView } from 'expo-symbols';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Image, ScrollView, Text, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
+import { Alert, Animated, Image, ScrollView, Text, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import { NotesCanvas, type CanvasCommand, type TextFormat } from '../../../modules/notes-canvas';
 import * as repository from '../../shared/documents/repository';
 import { pageSize, paperFill, type NotebookManifest, type NotebookPage, type PageObject } from '../../shared/documents/types';
@@ -15,6 +17,8 @@ export type EditorPageRibbonProps = {
   scrollRequest?: { index: number; id: number };
   /** Пользователь прокрутил к другой странице; лента не возвращает прокрутку. */
   onActivePageChange: (index: number) => void;
+  /** Пользователь потянул за последнюю страницу и отпустил; без обработчика жест выключен. */
+  onPullAddPage?: () => void;
   onHistoryChange: (history: History) => void;
   textFormat?: TextFormat;
   onObjectsChange: (pageId: string, objects: PageObject[]) => void;
@@ -48,6 +52,8 @@ const PageCell = memo(function PageCell({ item, documentId, width, height, mode,
 });
 
 const gap = 14;
+/** Насколько нужно потянуть за конец документа, чтобы отпускание добавило страницу. */
+const pullThreshold = 88;
 
 /**
  * Документ прокручивается и масштабируется одним UIScrollView. PKCanvasView есть только у видимой
@@ -84,15 +90,42 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
   useEffect(() => { layoutRef.current = layout; }, [layout]);
   const [visibleIndex, setVisibleIndex] = useState(activePage);
   const zoom = useRef(1);
+  const [pull] = useState(() => new Animated.Value(0));
+  const pullStyle = useMemo(() => ({
+    opacity: pull.interpolate({ inputRange: [8, pullThreshold * 0.6], outputRange: [0, 1], extrapolate: 'clamp' }),
+    scale: pull.interpolate({ inputRange: [0, pullThreshold], outputRange: [0.6, 1], extrapolate: 'clamp' }),
+  }), [pull]);
+  const dragging = useRef(false);
+  const armedRef = useRef(false);
+  const [armed, setArmed] = useState(false);
+  const arm = useCallback((value: boolean) => {
+    if (armedRef.current === value) return;
+    armedRef.current = value;
+    setArmed(value);
+    if (value) void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
   const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, zoomScale, layoutMeasurement } = event.nativeEvent;
+    const { contentOffset, contentSize, zoomScale, layoutMeasurement } = event.nativeEvent;
     zoom.current = zoomScale || 1;
+    const horizontal = latest.current.horizontal;
     const pages = layoutRef.current;
-    const center = ((latest.current.horizontal ? contentOffset.x + layoutMeasurement.width / 2 : contentOffset.y + layoutMeasurement.height / 2)) / zoom.current;
+    const center = ((horizontal ? contentOffset.x + layoutMeasurement.width / 2 : contentOffset.y + layoutMeasurement.height / 2)) / zoom.current;
     let index = 0;
     while (index + 1 < pages.length && pages[index + 1].start <= center) index++;
     if (index !== visible.current) { visible.current = index; setVisibleIndex(index); latest.current.onActivePageChange(index); }
-  }, []);
+    const overscroll = horizontal
+      ? contentOffset.x + layoutMeasurement.width - Math.max(contentSize.width, layoutMeasurement.width)
+      : contentOffset.y + layoutMeasurement.height - Math.max(contentSize.height, layoutMeasurement.height);
+    pull.setValue(Math.max(0, overscroll));
+    if (dragging.current && latest.current.onPullAddPage) arm(overscroll >= pullThreshold);
+  }, [arm, pull]);
+  const beginDrag = useCallback(() => { dragging.current = true; }, []);
+  const endDrag = useCallback(() => {
+    dragging.current = false;
+    if (!armedRef.current) return;
+    arm(false);
+    latest.current.onPullAddPage?.();
+  }, [arm]);
 
   // Внешний переход (боковая панель, «Перейти к странице») — плавная прокрутка; прокрутка пальцем сюда не попадает.
   const request = props.scrollRequest;
@@ -121,7 +154,7 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
   return <View style={{ flex: 1 }} onLayout={measure}>
     {viewport.width > 0 && <ScrollView ref={list} key={String(horizontal)} horizontal={horizontal} pagingEnabled={horizontal}
       minimumZoomScale={1} maximumZoomScale={4} bouncesZoom pinchGestureEnabled
-      scrollEventThrottle={16} onScroll={onScroll} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={!horizontal}
+      scrollEventThrottle={16} onScroll={onScroll} onScrollBeginDrag={beginDrag} onScrollEndDrag={endDrag} showsHorizontalScrollIndicator={false} showsVerticalScrollIndicator={!horizontal}
       contentContainerStyle={horizontal ? { width: length, height: viewport.height } : { width: viewport.width, height: length }}>
       {notebook.pages.map((item, index) => {
         const slot = layout[index];
@@ -137,6 +170,16 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
             onObjectsChange={objects} onToolEnd={toolEnd} onTextEditingChange={textEditing} onVisibleCenter={visibleCenter} onHistoryChange={history} />
         </View>;
       })}
+      {props.onPullAddPage && <Animated.View pointerEvents="none" accessibilityElementsHidden style={[horizontal
+        ? { position: 'absolute', left: length + 8, top: insetTop, width: 132, height: viewport.height - insetTop - 24, justifyContent: 'center' }
+        : { position: 'absolute', top: length - 8, left: 0, width: viewport.width },
+      { alignItems: 'center', gap: 8, opacity: pullStyle.opacity }]}>
+        <Animated.View style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: armed ? '#1F6FE5' : '#FFFFFF', shadowColor: '#1D2422', shadowOpacity: 0.12, shadowRadius: 4, shadowOffset: { width: 0, height: 1 },
+          transform: [{ scale: pullStyle.scale }] }}>
+          <SymbolView name="plus" size={16} weight="semibold" tintColor={armed ? '#FFFFFF' : '#5E6463'} />
+        </Animated.View>
+        <Text style={{ fontSize: 13, fontWeight: '500', color: '#5E6463', textAlign: 'center' }}>{armed ? 'Отпустите, чтобы добавить страницу' : 'Потяните, чтобы добавить страницу'}</Text>
+      </Animated.View>}
     </ScrollView>}
     <View pointerEvents="none" style={{ position: 'absolute', bottom: 20, left: 16, paddingHorizontal: 10, height: 24, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.86)', shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 4, shadowOffset: { width: 0, height: 1 } }}>
       <Text style={{ fontSize: 13, fontWeight: '500', color: '#5E6463', fontVariant: ['tabular-nums'] }}>{activePage + 1} из {notebook.pages.length}</Text>
