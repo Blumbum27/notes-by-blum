@@ -45,5 +45,5 @@ export function EditorToolPanel({ state, onChange, onClear }: Props & { onClear:
 }
 
 export function EditorHistory({ canUndo, canRedo, onUndo, onRedo }: { canUndo: boolean; canRedo: boolean; onUndo: () => void; onRedo: () => void }) {
-  return <Host style={{ width: 280, height: 48 }}><HStack spacing={8}><Button label="Отмена" systemImage="arrow.uturn.backward" modifiers={[disabled(!canUndo)]} onPress={onUndo} /><Button label="Повторить" systemImage="arrow.uturn.forward" modifiers={[disabled(!canRedo)]} onPress={onRedo} /></HStack></Host>;
+  return <Host style={{ width: 280, height: 48 }}><HStack spacing={8} modifiers={[padding({ all: 6 }), glassEffect()]}><Button label="Отмена" systemImage="arrow.uturn.backward" modifiers={[disabled(!canUndo)]} onPress={onUndo} /><Button label="Повторить" systemImage="arrow.uturn.forward" modifiers={[disabled(!canRedo)]} onPress={onRedo} /></HStack></Host>;
 }
