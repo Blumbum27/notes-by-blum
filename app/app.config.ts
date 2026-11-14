@@ -1,9 +1,10 @@
 import type { ExpoConfig } from 'expo/config';
 
 const config: ExpoConfig = {
-  name: 'notes by Blum',
+  name: 'Inkbloom',
   slug: 'notes-by-blum',
   version: '0.1.0',
+  icon: './assets/icon.png',
   scheme: 'notesbyblum',
   orientation: 'default',
   userInterfaceStyle: 'automatic',
