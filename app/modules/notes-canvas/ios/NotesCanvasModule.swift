@@ -1,12 +1,19 @@
 import ExpoModulesCore
 import PencilKit
 import UIKit
+import PDFKit
 
 public final class NotesCanvasModule: Module {
   public func definition() -> ModuleDefinition {
     Name("NotesCanvas")
     View(NotesCanvasView.self) {
-      Events("onDrawingChange", "onError")
+      Events("onDrawingChange", "onError", "onObjectsChange", "onToolEnd")
+      Prop("objects") { (view, value: [[String: Any]]) in view.setObjects(value) }
+      Prop("textFormat") { (view, value: [String: Any]) in view.textFormat = value; view.applyTextFormat() }
+      Prop("pageWidth") { (view, value: Double) in view.pageSize.width = value; view.setNeedsLayout() }
+      Prop("pageHeight") { (view, value: Double) in view.pageSize.height = value; view.setNeedsLayout() }
+      Prop("packagePath") { (view, value: String) in view.packageURL = URL(string: value); view.updateBackground() }
+      Prop("background") { (view, value: [String: Any]) in view.pageBackground = value; view.updateBackground() }
       Prop("filePath") { (view, value: String) in view.load(value) }
       Prop("tool") { (view, value: String) in view.toolName = value; view.updateTool() }
       Prop("color") { (view, value: String) in view.inkColor = UIColor(hex: value); view.updateTool() }
@@ -14,7 +21,7 @@ public final class NotesCanvasModule: Module {
       Prop("eraserMode") { (view, value: String) in view.vectorEraser = value == "vector"; view.updateTool() }
       Prop("pattern") { (view, value: String) in view.paper.pattern = value; view.paper.setNeedsDisplay() }
       Prop("paperColor") { (view, value: String) in view.paper.backgroundColor = UIColor(hex: value) }
-      Prop("readOnly") { (view, value: Bool) in view.canvas.isUserInteractionEnabled = !value }
+      Prop("readOnly") { (view, value: Bool) in view.readOnly = value; view.updateTool() }
       Prop("fingerDrawing") { (view, value: Bool) in view.setDrawingPolicy(value) }
       Prop("command") { (view, value: [String: Any]) in
         guard let id = value["id"] as? Int, id != view.lastCommand else { return }
@@ -32,11 +39,26 @@ public final class NotesCanvasModule: Module {
   }
 }
 
-final class NotesCanvasView: ExpoView, PKCanvasViewDelegate {
+final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate, UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate {
+  let content = UIView()
+  var pageSize = CGSize(width: 595, height: 842)
   let canvas = PKCanvasView()
   let paper = PaperView()
+  let backgroundImage = UIImageView()
+  var packageURL: URL?
+  var pageBackground: [String: Any] = [:]
+  private var saveWork: DispatchWorkItem?
+  private var loadFailed = false
   let onDrawingChange = EventDispatcher()
   let onError = EventDispatcher()
+  let onObjectsChange = EventDispatcher()
+  let onToolEnd = EventDispatcher()
+  let objectLayer = UIView()
+  var pageObjects: [[String: Any]] = []
+  var textFormat: [String: Any] = [:]
+  var readOnly = false
+  var editingText: UITextView?
+  var objectViews: [String: UIView] = [:]
   var toolName = "pen"
   var inkColor = UIColor.label
   var inkWidth = 3.0
@@ -47,8 +69,16 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate {
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
-    addSubview(paper)
-    addSubview(canvas)
+    addSubview(content)
+    content.addSubview(paper)
+    content.addSubview(backgroundImage)
+    backgroundImage.contentMode = .scaleAspectFit
+    content.addSubview(canvas)
+    content.addSubview(objectLayer)
+    objectLayer.isUserInteractionEnabled = false
+    let tap = UITapGestureRecognizer(target: self, action: #selector(pageTapped(_:)))
+    tap.delegate = self
+    objectLayer.addGestureRecognizer(tap)
     canvas.backgroundColor = .clear
     canvas.isOpaque = false
     canvas.isScrollEnabled = false
@@ -59,9 +89,13 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate {
 
   override func layoutSubviews() {
     super.layoutSubviews()
-    paper.frame = bounds
-    canvas.frame = bounds
-    canvas.contentSize = bounds.size
+    content.transform = .identity
+    content.frame = CGRect(origin: .zero, size: pageSize)
+    for view in [paper, backgroundImage, canvas, objectLayer] { view.frame = content.bounds }
+    canvas.contentSize = pageSize
+    let scale = bounds.width / pageSize.width
+    content.transform = CGAffineTransform(scaleX: scale, y: scale)
+    content.frame.origin = .zero
   }
 
   func setDrawingPolicy(_ finger: Bool) {
@@ -73,6 +107,9 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate {
   }
 
   func updateTool() {
+    canvas.isUserInteractionEnabled = !readOnly && toolName != "text" && toolName != "image"
+    objectLayer.isUserInteractionEnabled = !readOnly && ["text", "image"].contains(toolName)
+    if toolName != "text" { editingText?.resignFirstResponder() }
     if toolName == "eraser" {
       canvas.tool = PKEraserTool(vectorEraser ? .vector : .bitmap, width: inkWidth)
     } else if toolName == "lasso" {
@@ -95,31 +132,53 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate {
     if fileURL != nil { persist() }
     fileURL = url
     loading = true
+    loadFailed = false
     do {
       canvas.drawing = FileManager.default.fileExists(atPath: url.path)
         ? try PKDrawing(data: Data(contentsOf: url)) : PKDrawing()
       canvas.undoManager?.removeAllActions()
-    } catch { onError(["message": "Не удалось открыть страницу: \(error.localizedDescription)"]) }
+    } catch { loadFailed = true; onError(["message": "Не удалось открыть страницу. Закройте документ и попробуйте снова."]) }
     loading = false
     notify()
   }
 
   func persist() {
-    guard !loading, let url = fileURL else { return }
+    guard !loading, !loadFailed, let url = fileURL else { return }
     do {
       try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       try canvas.drawing.dataRepresentation().write(to: url, options: .atomic)
-      let thumbnail = url.deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("thumbnails/\(url.deletingPathExtension().lastPathComponent).png")
-      let image = canvas.drawing.image(from: bounds, scale: 0.35)
-      try image.pngData()?.write(to: thumbnail, options: .atomic)
     } catch { onError(["message": "Не удалось сохранить страницу: \(error.localizedDescription)"]) }
   }
 
   func notify() {
     onDrawingChange(["canUndo": canvas.undoManager?.canUndo ?? false, "canRedo": canvas.undoManager?.canRedo ?? false])
   }
-  func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) { persist(); notify() }
+  func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+    saveWork?.cancel()
+    let work = DispatchWorkItem { [weak self] in self?.persist() }
+    saveWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: work)
+    notify()
+  }
+  func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) { persist(); notify(); onToolEnd([:]) }
+  override func didMoveToWindow() {
+    super.didMoveToWindow()
+    if window == nil { saveWork?.cancel(); persist() }
+  }
+  func updateBackground() {
+    backgroundImage.image = nil
+    paper.isHidden = pageBackground["kind"] as? String == "pdf" || pageBackground["kind"] as? String == "image"
+    guard let asset = pageBackground["asset"] as? String, let root = packageURL else { return }
+    let url = root.appendingPathComponent(asset)
+    if pageBackground["kind"] as? String == "pdf" {
+      if let page = PDFDocument(url: url)?.page(at: pageBackground["page"] as? Int ?? 0) {
+        backgroundImage.image = page.thumbnail(of: CGSize(width: 1600, height: 2200), for: .mediaBox)
+      } else { onError(["message": "Не удалось открыть фон PDF. Повторно откройте документ."]) }
+    } else {
+      backgroundImage.image = UIImage(contentsOfFile: url.path)
+      if backgroundImage.image == nil { onError(["message": "Не удалось открыть изображение фона."]) }
+    }
+  }
 }
 
 private extension UIColor {

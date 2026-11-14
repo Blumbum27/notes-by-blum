@@ -1,62 +1,82 @@
+import { Stack, useLocalSearchParams } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, View, useWindowDimensions } from 'react-native';
 import { Button, ColorPicker, Host, HStack, Menu } from '@expo/ui/swift-ui';
-import { buttonStyle, disabled, padding } from '@expo/ui/swift-ui/modifiers';
-import { Stack, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Alert, FlatList, StyleSheet, View, useWindowDimensions } from 'react-native';
-import { NotesCanvas, type CanvasCommand, type CanvasTool } from '../../../modules/notes-canvas';
+import * as ImagePicker from 'expo-image-picker';
+import { File, Paths } from 'expo-file-system';
+import type { CanvasCommand } from '../../../modules/notes-canvas';
 import * as repository from '../../shared/documents/repository';
-import type { NotebookManifest } from '../../shared/documents/types';
-import { readSettings } from '../settings/SettingsScreen';
-import { EditorShell } from '../editor-shell/EditorShell';
+import type { NotebookManifest, PageObject } from '../../shared/documents/types';
+import { EditorHistory, EditorToolPanel, EditorTools, type EditorToolState } from './EditorTools';
+import { EditorPageRibbon } from './EditorPageRibbon';
 
+/** Композиция B для проверки; D подключает компоненты к оболочке C в route. */
 export default function NotebookScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [notebook, setNotebook] = useState<NotebookManifest>();
-  const [tool, setTool] = useState<CanvasTool>('pen');
-  const [color, setColor] = useState('#151515');
-  const [width, setWidth] = useState(3);
-  const [readOnly, setReadOnly] = useState(false);
-  const [eraserMode, setEraserMode] = useState<'bitmap' | 'vector'>('bitmap');
-  const [command, setCommand] = useState<CanvasCommand>();
-  const [history, setHistory] = useState({ canUndo: false, canRedo: false });
+  const [tools, setTools] = useState<EditorToolState>({ tool: 'pen', color: '#151515', width: 3, eraserMode: 'bitmap' });
   const [active, setActive] = useState(0);
-  const [pages, setPages] = useState(false);
-  const settings = readSettings();
+  const [history, setHistory] = useState({ canUndo: false, canRedo: false });
+  const [command, setCommand] = useState<CanvasCommand>();
+  const [textFormat, setTextFormat] = useState<Partial<Extract<PageObject, { kind: 'text' }>>>({ color: '#151515', fontSize: 24, fontFamily: 'System', bold: false, italic: false, alignment: 'left' });
   const dimensions = useWindowDimensions();
-  useEffect(() => { repository.readNotebook(id).then(setNotebook).catch(error => Alert.alert('Не удалось открыть блокнот', String(error))); }, [id]);
+  const pendingSave = useRef<Promise<unknown>>(Promise.resolve());
+  const presets = useRef<Partial<Record<CanvasToolName, EditorToolState>>>({});
+  useEffect(() => {
+    const file = new File(Paths.document, 'editor-presets.json');
+    if (file.exists) {
+      try { presets.current = JSON.parse(file.textSync()); }
+      catch { Alert.alert('Не удалось открыть настройки инструментов'); }
+    }
+  }, []);
+  useEffect(() => {
+    let current = true;
+    repository.readNotebook(id).then(value => { if (current) setNotebook(value); }).catch(() => Alert.alert('Не удалось открыть блокнот', 'Вернитесь в библиотеку и попробуйте снова.'));
+    return () => { current = false; };
+  }, [id]);
   const send = (action: CanvasCommand['action']) => setCommand({ id: Date.now(), action });
-  const save = async (value: NotebookManifest) => { try { setNotebook(await repository.saveNotebook(value)); } catch (error) { Alert.alert('Не удалось сохранить', String(error)); } };
-  if (!notebook) return null;
-  const addPage = (position: 'before' | 'after' | 'last') => {
-    const next = [...notebook.pages];
-    next.splice(position === 'last' ? next.length : active + (position === 'after' ? 1 : 0), 0, repository.createPage(notebook.pages[active].paper));
-    void save({ ...notebook, pages: next });
+  const saveObjects = (pageId: string, objects: PageObject[]) => {
+    if (!notebook) return;
+    const next = { ...notebook, pages: notebook.pages.map(page => page.id === pageId ? { ...page, objects } : page) };
+    setNotebook(next);
+    pendingSave.current = pendingSave.current.then(() => repository.saveNotebook(next)).catch(() => Alert.alert('Не удалось сохранить объекты', 'Не закрывайте документ и попробуйте снова.'));
   };
-  return <EditorShell><View style={styles.root}><Stack.Screen options={{ headerShown: false }} />
-    <Host ignoreSafeArea="all" style={{ height: 64 }}><HStack spacing={20} modifiers={[padding({ all: 12 })]}><Button label="Домой" systemImage="house" onPress={() => router.back()} /><Menu label={notebook.title} systemImage="chevron.down"><Button label="Переименовать" onPress={() => Alert.prompt('Название блокнота', undefined, title => { if (title.trim()) void save({ ...notebook, title }); }, 'plain-text', notebook.title)} /><Button label="Закрыть" onPress={() => router.back()} /></Menu></HStack></Host>
-    <Host ignoreSafeArea="all" style={{ height: 62 }}><HStack spacing={16} modifiers={[padding({ all: 8 })]}>
-      <Button label="Страницы" systemImage="sidebar.left" onPress={() => setPages(!pages)} />
-      <Button label={readOnly ? 'Только чтение' : 'Правка'} systemImage="pencil.tip" onPress={() => setReadOnly(!readOnly)} />
-      {!readOnly && <><Button label="Лассо" systemImage="lasso" onPress={() => setTool('lasso')} /><Button label="Письмо" systemImage="pencil.tip.crop.circle" onPress={() => setTool('pen')} /><Button label="Ластик" systemImage="eraser" onPress={() => setTool('eraser')} /></>}
-      <Menu label="Добавить" systemImage="doc.badge.plus"><Button label="Перед" onPress={() => addPage('before')} /><Button label="После" onPress={() => addPage('after')} /><Button label="Последняя страница" onPress={() => addPage('last')} /></Menu>
-      <Menu label="Ещё" systemImage="ellipsis.circle"><Button label="Очистить страницу" role="destructive" onPress={() => send('clear')} /><Button label="Удалить страницу" role="destructive" onPress={() => { if (notebook.pages.length > 1) { void save({ ...notebook, pages: notebook.pages.filter((_, index) => index !== active) }); setActive(0); } }} /></Menu>
-    </HStack></Host>
-    {!readOnly && <Host ignoreSafeArea="all" style={{ height: 60 }}><HStack spacing={12} modifiers={[padding({ all: 8 })]}>
-      <Button label="Отмена" systemImage="arrow.uturn.backward" modifiers={[disabled(!history.canUndo)]} onPress={() => send('undo')} /><Button label="Повторить" systemImage="arrow.uturn.forward" modifiers={[disabled(!history.canRedo)]} onPress={() => send('redo')} />
-      {tool !== 'eraser' && tool !== 'lasso' && <><Menu label="Ручка" systemImage="pencil.tip"><Button label="Перьевая" onPress={() => setTool('fountain')} /><Button label="Шариковая" onPress={() => setTool('monoline')} /><Button label="Ручка-кисть" onPress={() => setTool('pen')} /></Menu><Button label="Карандаш" systemImage="pencil" onPress={() => setTool('pencil')} /><Button label="Маркер" systemImage="highlighter" onPress={() => setTool('marker')} /><ColorPicker label="Цвет" selection={color} onSelectionChange={setColor} /></>}
-      {tool === 'eraser' && <Menu label={eraserMode === 'vector' ? 'Для штрихов' : 'Точный'}><Button label="Точный" onPress={() => { setEraserMode('bitmap'); setWidth(5); }} /><Button label="Стандартный" onPress={() => { setEraserMode('bitmap'); setWidth(20); }} /><Button label="Для штрихов" onPress={() => setEraserMode('vector')} /></Menu>}
-      {tool !== 'lasso' && [2, 5, 12].map(size => <Button key={size} label={`${size}`} modifiers={[buttonStyle(width === size ? 'borderedProminent' : 'bordered')]} onPress={() => setWidth(size)} />)}
+  const changeTools = (next: EditorToolState) => {
+    if (next.tool !== tools.tool) {
+      presets.current[tools.tool] = tools;
+      next = presets.current[next.tool] ?? next;
+    }
+    setTools(next);
+    presets.current[next.tool] = next;
+    try { new File(Paths.document, 'editor-presets.json').write(JSON.stringify(presets.current)); }
+    catch { Alert.alert('Не удалось сохранить настройки инструмента'); }
+    if (next.tool === 'image' && notebook) void (async () => {
+      try {
+        const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+        if (result.canceled) return;
+        const asset = result.assets[0]; const name = `${repository.newId()}.${asset.uri.split('.').pop() ?? 'jpg'}`;
+        const destination = new File(repository.packageDirectory(notebook.id), 'assets', name);
+        new File(asset.uri).copy(destination);
+        const page = notebook.pages[active];
+        saveObjects(page.id, [...page.objects, { id: repository.newId(), kind: 'image', asset: `assets/${name}`, x: 60, y: 80, width: 260, height: 260 * asset.height / asset.width, rotation: 0 }]);
+      } catch { Alert.alert('Не удалось вставить изображение', 'Выберите изображение ещё раз.'); }
+    })();
+  };
+  if (!notebook) return null;
+  return <View style={{ flex: 1, paddingTop: 28, backgroundColor: '#E8EAEE' }}>
+    <Stack.Screen options={{ headerShown: false }} />
+    <EditorTools state={tools} onChange={changeTools} />
+    <EditorToolPanel state={tools} onChange={changeTools} onClear={() => Alert.alert('Очистить страницу?', 'Все рукописные штрихи на странице будут удалены.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: () => send('clear') }])} />
+    <EditorHistory {...history} onUndo={() => send('undo')} onRedo={() => send('redo')} />
+    {tools.tool === 'text' && <Host style={{ height: 52, width: 700, alignSelf: 'center' }}><HStack spacing={12}>
+      <ColorPicker label="Цвет текста" selection={textFormat.color ?? '#151515'} onSelectionChange={color => setTextFormat({ ...textFormat, color })} />
+      <Menu label={`${textFormat.fontSize}`} >{[12, 18, 24, 32, 48].map(fontSize => <Button key={fontSize} label={`${fontSize}`} onPress={() => setTextFormat({ ...textFormat, fontSize })} />)}</Menu>
+      <Menu label="Шрифт">{[['Современный', 'System'], ['Классический', 'Georgia'], ['Технический', 'Menlo']].map(([label, fontFamily]) => <Button key={fontFamily} label={label} onPress={() => setTextFormat({ ...textFormat, fontFamily })} />)}</Menu>
+      <Button label="B" onPress={() => setTextFormat({ ...textFormat, bold: !textFormat.bold })} /><Button label="I" onPress={() => setTextFormat({ ...textFormat, italic: !textFormat.italic })} />
+      <Menu label="Выравнивание">{(['left', 'center', 'right'] as const).map((alignment, index) => <Button key={alignment} label={['Слева', 'По центру', 'Справа'][index]} onPress={() => setTextFormat({ ...textFormat, alignment })} />)}</Menu>
     </HStack></Host>}
-    <View style={{ flex: 1, flexDirection: 'row' }}>{pages && <Host ignoreSafeArea="all" style={{ width: 180 }}><Menu label={`Страница ${active + 1}`}>
-      {notebook.pages.map((page, index) => <Button key={page.id} label={`Страница ${index + 1}`} onPress={() => setActive(index)} />)}
-    </Menu></Host>}
-    <FlatList data={notebook.pages} horizontal={settings.horizontal} key={String(settings.horizontal)} initialNumToRender={2} maxToRenderPerBatch={3} windowSize={3} onViewableItemsChanged={({ viewableItems }) => { if (viewableItems[0]?.index != null) setActive(viewableItems[0].index); }} viewabilityConfig={{ itemVisiblePercentThreshold: 50 }} contentContainerStyle={{ padding: 24, gap: 18, alignItems: 'center' }} keyExtractor={page => page.id} renderItem={({ item, index }) => {
-      const pageWidth = Math.min(dimensions.width - (pages ? 240 : 80), 650);
-      const height = pageWidth * (item.paper.orientation === 'portrait' ? 1.414 : 0.707);
-      return <View style={{ width: pageWidth, height, backgroundColor: '#FFF', shadowOpacity: 0.14, shadowRadius: 5 }}><NotesCanvas style={{ width: pageWidth, height }} filePath={repository.drawingPath(id, item.id)} tool={tool} color={color} strokeWidth={width} eraserMode={eraserMode} pattern={item.paper.pattern} paperColor={item.paper.color === 'white' ? '#FFFFFF' : '#FFF6D5'} readOnly={readOnly} fingerDrawing={settings.fingerDrawing} command={index === active ? command : undefined} onDrawingChange={event => { if (index === active) setHistory(event.nativeEvent); }} onError={event => Alert.alert('Ошибка страницы', event.nativeEvent.message)} /></View>;
-    }} />
-    </View>
-  </View></EditorShell>;
+    <EditorPageRibbon notebook={notebook} tools={tools} readOnly={false} fingerDrawing={false} width={dimensions.width} activePage={active} command={command} onActivePageChange={setActive} onHistoryChange={setHistory} textFormat={textFormat} onObjectsChange={saveObjects} />
+  </View>;
 }
 
-const styles = StyleSheet.create({ root: { flex: 1, paddingTop: 24, backgroundColor: '#E8EAEE' } });
+type CanvasToolName = EditorToolState['tool'];

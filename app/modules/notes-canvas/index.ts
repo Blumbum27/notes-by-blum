@@ -2,7 +2,7 @@ import { requireNativeView } from 'expo';
 import type { ViewProps } from 'react-native';
 import type { PageBackground, PageObject } from '../../src/shared/documents/types';
 
-export type CanvasTool = 'pen' | 'monoline' | 'fountain' | 'marker' | 'pencil' | 'eraser' | 'lasso';
+export type CanvasTool = 'pen' | 'monoline' | 'fountain' | 'marker' | 'pencil' | 'eraser' | 'lasso' | 'text' | 'image';
 export type CanvasCommand = { id: number; action: 'undo' | 'redo' | 'clear' | 'save' };
 export type NotesCanvasProps = ViewProps & {
   filePath: string;
@@ -10,6 +10,9 @@ export type NotesCanvasProps = ViewProps & {
   packagePath?: string;
   background?: PageBackground;
   objects?: PageObject[];
+  textFormat?: Partial<Extract<PageObject, { kind: 'text' }>>;
+  pageWidth?: number;
+  pageHeight?: number;
   tool: CanvasTool;
   color: string;
   strokeWidth: number;
@@ -21,6 +24,8 @@ export type NotesCanvasProps = ViewProps & {
   command?: CanvasCommand;
   onDrawingChange?: (event: { nativeEvent: { canUndo: boolean; canRedo: boolean } }) => void;
   onError?: (event: { nativeEvent: { message: string } }) => void;
+  onObjectsChange?: (event: { nativeEvent: { objects: PageObject[] } }) => void;
+  onToolEnd?: () => void;
 };
 
 export const NotesCanvas = requireNativeView<NotesCanvasProps>('NotesCanvas');
