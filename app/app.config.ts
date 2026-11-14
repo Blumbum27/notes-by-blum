@@ -10,7 +10,7 @@ const config: ExpoConfig = {
   ios: {
     bundleIdentifier: 'com.alexakalin.notesbyblum',
     supportsTablet: true,
-    infoPlist: { ITSAppUsesNonExemptEncryption: false },
+    infoPlist: { ITSAppUsesNonExemptEncryption: false, UIFileSharingEnabled: true, LSSupportsOpeningDocumentsInPlace: true },
   },
   android: { package: 'com.alexakalin.notesbyblum' },
   plugins: [
