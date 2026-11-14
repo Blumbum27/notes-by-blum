@@ -1,7 +1,7 @@
 import { Button, ColorPicker, Host, HStack, Menu, Popover, VStack, Text } from '@expo/ui/swift-ui';
 import { useWindowDimensions } from 'react-native';
 import { useState } from 'react';
-import { buttonStyle, disabled, padding } from '@expo/ui/swift-ui/modifiers';
+import { buttonStyle, disabled, padding, glassEffect, labelsHidden } from '@expo/ui/swift-ui/modifiers';
 import type { CanvasTool } from '../../../modules/notes-canvas';
 
 export type EditorToolState = {
@@ -27,7 +27,7 @@ export function EditorToolPanel({ state, onChange, onClear }: Props & { onClear:
   const update = (patch: Partial<EditorToolState>) => onChange({ ...state, ...patch });
   if (state.tool === 'lasso') return <Host style={{ height: 52, width: 260, alignSelf: 'center' }}><Menu label="Лассо"><Text>Произвольное выделение штрихов</Text></Menu></Host>;
   if (state.tool === 'image' || state.tool === 'text') return null;
-  return <Host style={{ height: 58, width: Math.min(900, windowWidth - 24), alignSelf: 'center' }}><HStack spacing={8} modifiers={[padding({ all: 8 })]}>
+  return <Host style={{ height: 58, width: Math.min(state.tool === 'eraser' ? 380 : 760, windowWidth - 24), alignSelf: 'center' }}><HStack spacing={8} modifiers={[padding({ all: 8 }), glassEffect()]}>
     {state.tool === 'eraser' ? <Menu label={state.eraserMode === 'vector' ? 'Для штрихов' : state.width < 10 ? 'Точный' : 'Стандартный'}>
       <Button label="Точный" onPress={() => update({ eraserMode: 'bitmap', width: 5 })} />
       <Button label="Стандартный" onPress={() => update({ eraserMode: 'bitmap', width: 20 })} />
@@ -40,7 +40,7 @@ export function EditorToolPanel({ state, onChange, onClear }: Props & { onClear:
       <Button label="Маркер" systemImage="highlighter" onPress={() => update({ tool: 'marker', width: 12 })} />
     </>}
     {(state.tool === 'eraser' ? [5, 20, 40] : state.tool === 'marker' ? [8, 12, 20] : [1, 3, 6]).map(width => <Button key={width} label={`${width}`} onPress={() => update({ width })} modifiers={[buttonStyle(state.width === width ? 'borderedProminent' : 'bordered')]} />)}
-    {state.tool !== 'eraser' && <><Menu label="Цвета">{['#151515', '#FFFFFF', '#006F83', '#D57A00', '#E00000', '#FFEE00'].map(color => <Button key={color} label={color === '#151515' ? 'Чёрный' : color === '#FFFFFF' ? 'Белый' : color === '#006F83' ? 'Синий' : color === '#D57A00' ? 'Оранжевый' : color === '#E00000' ? 'Красный' : 'Жёлтый'} onPress={() => update({ color })} />)}</Menu><ColorPicker label="" selection={state.color} onSelectionChange={color => update({ color })} /></>}
+    {state.tool !== 'eraser' && <><Menu label="Цвета">{['#151515', '#FFFFFF', '#006F83', '#D57A00', '#E00000', '#FFEE00'].map(color => <Button key={color} label={color === '#151515' ? 'Чёрный' : color === '#FFFFFF' ? 'Белый' : color === '#006F83' ? 'Синий' : color === '#D57A00' ? 'Оранжевый' : color === '#E00000' ? 'Красный' : 'Жёлтый'} onPress={() => update({ color })} />)}</Menu><ColorPicker label="Цвет" modifiers={[labelsHidden()]} selection={state.color} onSelectionChange={color => update({ color })} /></>}
   </HStack></Host>;
 }
 
