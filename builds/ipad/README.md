@@ -1,4 +1,4 @@
-# Актуальная сборка для iPad
+# Актуальная сборка Inkbloom для iPad
 
 Файл для передачи на Windows: **`builds/ipad/notes-by-blum.ipa`**.
 Это Release для реального iPad (`iphoneos`, arm64), а не сборка симулятора.
@@ -13,34 +13,44 @@ JavaScript включён в приложение; Metro для запуска �
 
 ## Сведения об артефакте
 
-- Исходники: `4aeb83ec4326b1285c802000eda88b0d3e48afbe`, ветка `app/alex/dev`.
+- Исходники: `785c3d8bab4d93ba1ae58bbf5a1b714d3b16e24d`, ветка `app/alex/dev`.
   При сборке tracked-исходники приложения не изменялись. Передача того же `.ipa`
   в `app/yura/dev` не означает пересборку из независимых изменений этой ветки.
 - Версия приложения: `0.1.0`, номер сборки `1`.
 - Bundle ID до переподписи: `com.alexakalin.notesbyblum`.
 - Минимальная система: iPadOS 26.0; только iPad.
 - Инструменты: Xcode 27.1 (`27A9275`), Node 24.15.0.
-- Размер `.ipa`: `12 105 294` байта (11.54 MiB).
-- SHA-256: `5d30ab7dc75dae4a47c845f3160d3feec85715db91e56b0e3bc86713d0871a9b`.
-- Это текущий каркас приложения, не завершённый этап 1. Незавершённые изменения
-  из параллельных веток `stage1/*` в эту сборку не включены.
+- Размер `.ipa`: `14 027 397` байт (13.38 MiB).
+- SHA-256: `9d408735fda8db133ca60caa216afd80b95cac7a4a76fc4402e931a98ca7612b`.
+- Включены новый главный экран, инструменты и меню редактора, добавление страницы
+  вытягиванием ленты, название/иконка Inkbloom, увеличенные зоны нажатия,
+  постоянная ширина панели письма и контрастные цвета/метки толщины.
+  Это не означает завершения всего этапа 1 или проверки всех функций.
 
 ## Проверки этой сборки
 
 - **PASS:** `xcodebuild` Release для `generic/platform=iOS` завершился
   `BUILD SUCCEEDED`; основной исполняемый файл — Mach-O arm64, платформа iOS,
   не Simulator. `Info.plist` указывает iPad, iPadOS 26.0 и ожидаемые ID/версию.
-- **PASS:** целостность ZIP, структура `Payload/notesbyBlum.app`, встроенный
-  `main.jsbundle` (2 808 464 байта), отсутствие `embedded.mobileprovision`
+- **PASS:** целостность ZIP, структура `Payload/Inkbloom.app`, встроенный
+  `main.jsbundle` (3 974 173 байта), отсутствие `embedded.mobileprovision`
   и файлов ключей в архиве, размер ниже лимита обычного файла GitHub.
 - **PASS:** `npm run typecheck` и `npm run lint` для исходников приложения.
 - **NOT TESTED:** переподпись и установка через Sideloadly на целевом Windows,
   запуск на реальном iPad без Metro, работа функций, сохранность заметок после
   обновления и продление подписи. Целевой ноутбук/iPad в другом городе недоступны
-  этому агенту; физический iPad в локальном контуре по правилам не используется.
+  этому агенту. Для локального iPad собран отдельно подписанный Release из того
+  же source SHA; он установлен поверх прежней версии и запущен на iPad Air 11 M3,
+  iPadOS 26.7.2. Это не проверка переподписи именно этого `.ipa` через Sideloadly.
   Наличие встроенного JS не заменяет проверку запуска.
-- Visual/motion: не проверялись; UI-код не менялся, скриншоты и запись работы
-  именно этого артефакта на реальном устройстве не получены.
+- **PASS (UI исходников):** независимая приёмка панели на iPad-симуляторе
+  820×1180 / 1180×820: кнопки письма не сдвигаются, краевые нажатия срабатывают,
+  цвета и метки толщины контрастны, поповеры открываются. На подписанном Release
+  просмотрены библиотека и редактор в ландшафте на физическом iPad.
+  Локальные evidence: `~/Pictures/OpenCode/notes-by-blum/panel-fix/acceptance/`
+  и `~/Pictures/OpenCode/notes-by-blum/panel-fix/ipad/`.
+- Motion/haptics: **NOT TESTED** — статические кадры не доказывают плавность
+  и качество тактильного отклика. Полная приёмка функций не проводилась.
 
 ## Обновление файла
 
@@ -71,8 +81,8 @@ Get-FileHash .\builds\ipad\notes-by-blum.ipa -Algorithm SHA256
 
 ```sh
 NODE_ENV=production CI=1 xcodebuild \
-  -workspace app/ios/notesbyBlum.xcworkspace \
-  -scheme notesbyBlum -configuration Release \
+  -workspace app/ios/Inkbloom.xcworkspace \
+  -scheme Inkbloom -configuration Release \
   -sdk iphoneos -destination 'generic/platform=iOS' \
   -derivedDataPath "$BUILD_DIR" -jobs 4 \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= build
@@ -80,8 +90,8 @@ NODE_ENV=production CI=1 xcodebuild \
 
 `BUILD_DIR` — абсолютный путь к отдельному каталогу сборки вне Git. Не используйте
 каталог другого работающего агента. Не подключайте физический iPad ради сборки.
-Из результата `Build/Products/Release-iphoneos/notesbyBlum.app` создайте ZIP
-с единственным приложением в `Payload/notesbyBlum.app` и расширением `.ipa`;
+Из результата `Build/Products/Release-iphoneos/Inkbloom.app` создайте ZIP
+с единственным приложением в `Payload/Inkbloom.app` и расширением `.ipa`;
 сохраните символьные ссылки фреймворков. Перед заменой проверьте архив,
 платформу Mach-O (iOS, не Simulator), arm64, Info.plist и `main.jsbundle`.
 Не называйте проверку структуры успешной установкой или запуском на iPad.
@@ -92,8 +102,8 @@ NODE_ENV=production CI=1 xcodebuild \
 STAGING=$(mktemp -d "${TMPDIR%/}/notes-by-blum-ipa.XXXXXX")
 mkdir "$STAGING/Payload"
 ditto --norsrc --noextattr \
-  "$BUILD_DIR/Build/Products/Release-iphoneos/notesbyBlum.app" \
-  "$STAGING/Payload/notesbyBlum.app"
+  "$BUILD_DIR/Build/Products/Release-iphoneos/Inkbloom.app" \
+  "$STAGING/Payload/Inkbloom.app"
 ditto --norsrc --noextattr -c -k --keepParent \
   "$STAGING/Payload" "$STAGING/notes-by-blum.ipa"
 unzip -t "$STAGING/notes-by-blum.ipa"
