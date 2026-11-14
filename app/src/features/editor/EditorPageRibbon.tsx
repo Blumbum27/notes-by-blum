@@ -13,6 +13,8 @@ export type EditorPageRibbonProps = {
   textFormat?: Partial<Extract<PageObject, { kind: 'text' }>>;
   onObjectsChange: (pageId: string, objects: PageObject[]) => void;
   onToolEnd?: () => void;
+  onSaved?: (pageId: string, id: number, success: boolean) => void;
+  onLivePages?: (ids: string[]) => void;
 };
 
 /** Только текущая страница и соседи содержат живой PKCanvasView. */
@@ -21,12 +23,15 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
   const list = useRef<FlatList<NotebookPage>>(null);
   const latest = useRef(props);
   useEffect(() => { latest.current = props; }, [props]);
+  useEffect(() => { props.onLivePages?.(props.notebook.pages.filter((_, index) => Math.abs(index - visible) <= 1).map(page => page.id)); }, [visible, props.notebook.pages, props.onLivePages]);
+  useEffect(() => { list.current?.scrollToIndex({ index: props.activePage, animated: false }); }, [props.activePage]);
   const viewability = useCallback(({ viewableItems }: { viewableItems: ViewToken<NotebookPage>[] }) => {
     const index = viewableItems[0]?.index;
     if (index != null) { setVisible(index); latest.current.onActivePageChange(index); }
   }, []);
   const width = Math.min(props.width - 48, 650);
   return <FlatList ref={list} key={String(props.horizontal)} horizontal={props.horizontal} data={props.notebook.pages}
+    onScrollToIndexFailed={({ index, averageItemLength }) => list.current?.scrollToOffset({ offset: index * averageItemLength })}
     extraData={[props.tools, props.command, visible, props.readOnly]} keyExtractor={page => page.id}
     initialNumToRender={2} maxToRenderPerBatch={3} windowSize={3}
     onViewableItemsChanged={viewability} viewabilityConfig={{ itemVisiblePercentThreshold: 1 }}
@@ -43,13 +48,14 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
           pageWidth={item.paper.orientation === 'portrait' ? short : short * ratio}
           pageHeight={item.paper.orientation === 'portrait' ? short * ratio : short}
            textFormat={props.textFormat} onObjectsChange={event => props.onObjectsChange(item.id, event.nativeEvent.objects)}
-           onToolEnd={props.onToolEnd}
+            onToolEnd={props.onToolEnd}
+            onSaved={event => props.onSaved?.(item.id, event.nativeEvent.id, event.nativeEvent.success)}
           strokeWidth={props.tools.width} eraserMode={props.tools.eraserMode} pattern={item.paper.pattern}
           paperColor={item.paper.color === 'white' ? '#FFFFFF' : '#FFF6D5'} readOnly={props.readOnly} fingerDrawing={props.fingerDrawing}
-          command={index === props.activePage ? props.command : undefined}
+           command={props.command?.action === 'save' || index === props.activePage ? props.command : undefined}
           onDrawingChange={event => { if (index === latest.current.activePage) props.onHistoryChange(event.nativeEvent); }}
           onError={event => Alert.alert('Ошибка страницы', event.nativeEvent.message)} />}
-        {Math.abs(index - visible) > 1 && <Image style={{ width, height }} source={{ uri: `${repository.packageDirectory(props.notebook.id).uri}/thumbnails/${item.id}-canvas.png` }} resizeMode="contain" />}
+        {Math.abs(index - visible) > 1 && <Image style={{ width, height }} source={{ uri: `${repository.packageDirectory(props.notebook.id).uri}/thumbnails/${item.id}.png` }} resizeMode="contain" />}
         </View></ScrollView>;
     }} />;
 }

@@ -7,7 +7,7 @@ public final class NotesCanvasModule: Module {
   public func definition() -> ModuleDefinition {
     Name("NotesCanvas")
     View(NotesCanvasView.self) {
-      Events("onDrawingChange", "onError", "onObjectsChange", "onToolEnd")
+      Events("onDrawingChange", "onError", "onObjectsChange", "onToolEnd", "onSaved")
       Prop("objects") { (view, value: [[String: Any]]) in view.setObjects(value) }
       Prop("textFormat") { (view, value: [String: Any]) in view.textFormat = value; view.applyTextFormat() }
       Prop("pageWidth") { (view, value: Double) in view.pageSize.width = value; view.setNeedsLayout() }
@@ -30,7 +30,9 @@ public final class NotesCanvasModule: Module {
         case "undo": view.canvas.undoManager?.undo()
         case "redo": view.canvas.undoManager?.redo()
         case "clear": view.clearDrawing()
-        case "save": view.persist()
+        case "save":
+          view.editingText?.resignFirstResponder()
+          view.onSaved(["id": id, "success": view.persist()])
         default: break
         }
         view.notify()
@@ -53,6 +55,7 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
   let onError = EventDispatcher()
   let onObjectsChange = EventDispatcher()
   let onToolEnd = EventDispatcher()
+  let onSaved = EventDispatcher()
   let objectLayer = UIView()
   var pageObjects: [[String: Any]] = []
   var textFormat: [String: Any] = [:]
@@ -145,17 +148,13 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
     notify()
   }
 
-  func persist() {
-    guard !loading, !loadFailed, let url = fileURL else { return }
+  @discardableResult func persist() -> Bool {
+    guard !loading, !loadFailed, let url = fileURL else { return false }
     do {
       try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
       try canvas.drawing.dataRepresentation().write(to: url, options: .atomic)
-      let renderer = UIGraphicsImageRenderer(size: pageSize)
-      let image = renderer.image { context in content.layer.render(in: context.cgContext) }
-      let thumbnail = url.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("thumbnails/\(url.deletingPathExtension().lastPathComponent)-canvas.png")
-      try FileManager.default.createDirectory(at: thumbnail.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try image.pngData()?.write(to: thumbnail, options: .atomic)
-    } catch { onError(["message": "Не удалось сохранить страницу. Не закрывайте документ и повторите попытку."]) }
+      return true
+    } catch { onError(["message": "Не удалось сохранить страницу. Не закрывайте документ и повторите попытку."]); return false }
   }
 
   func clearDrawing() {

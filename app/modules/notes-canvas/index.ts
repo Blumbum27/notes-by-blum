@@ -27,6 +27,7 @@ export type NotesCanvasProps = ViewProps & {
   onError?: (event: { nativeEvent: { message: string } }) => void;
   onObjectsChange?: (event: { nativeEvent: { objects: PageObject[] } }) => void;
   onToolEnd?: () => void;
+  onSaved?: (event: { nativeEvent: { id: number; success: boolean } }) => void;
 };
 
 export const NotesCanvas = requireNativeView<NotesCanvasProps>('NotesCanvas');
