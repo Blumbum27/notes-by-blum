@@ -1,0 +1,7 @@
+.DS_Store
+2026-11-13/
+node_modules/
+app/ios/
+app/android/
+app/.expo/
+*.log
