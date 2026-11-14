@@ -2,6 +2,7 @@ import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, View, useWindowDimensions } from 'react-native';
 import { Button, ColorPicker, Host, HStack, Menu } from '@expo/ui/swift-ui';
+import { glassEffect, labelsHidden, padding } from '@expo/ui/swift-ui/modifiers';
 import * as ImagePicker from 'expo-image-picker';
 import { File, Paths } from 'expo-file-system';
 import type { CanvasCommand, TextFormat } from '../../../modules/notes-canvas';
@@ -83,8 +84,8 @@ export default function NotebookScreen() {
 
 export function EditorTextFormat({ textFormat, setTextFormat }: { textFormat: TextFormat; setTextFormat: (format: TextFormat) => void }) {
   const { width } = useWindowDimensions();
-  return <Host style={{ height: 52, width: Math.min(700, width - 24), alignSelf: 'center' }}><HStack spacing={12}>
-      <ColorPicker label="Цвет текста" selection={textFormat.color ?? '#151515'} onSelectionChange={color => setTextFormat({ ...textFormat, color })} />
+  return <Host style={{ height: 52, width: Math.min(700, width - 24), alignSelf: 'center' }}><HStack spacing={12} modifiers={[padding({ all: 8 }), glassEffect()]}>
+      <ColorPicker label="Цвет текста" modifiers={[labelsHidden()]} selection={textFormat.color ?? '#151515'} onSelectionChange={color => setTextFormat({ ...textFormat, color })} />
       <Menu label={`${textFormat.fontSize}`} >{[12, 18, 24, 32, 48].map(fontSize => <Button key={fontSize} label={`${fontSize}`} onPress={() => setTextFormat({ ...textFormat, fontSize })} />)}</Menu>
       <Menu label="Шрифт">{[['Современный', 'System'], ['Классический', 'Georgia'], ['Технический', 'Menlo']].map(([label, fontFamily]) => <Button key={fontFamily} label={label} onPress={() => setTextFormat({ ...textFormat, fontFamily })} />)}</Menu>
       <Button label="B" onPress={() => setTextFormat({ ...textFormat, bold: !textFormat.bold })} /><Button label="I" onPress={() => setTextFormat({ ...textFormat, italic: !textFormat.italic })} />
