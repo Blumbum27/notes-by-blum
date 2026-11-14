@@ -12,7 +12,7 @@ export type NotesCanvasProps = ViewProps & {
   objects?: PageObject[];
   tool: CanvasTool;
   color: string;
-  width: number;
+  strokeWidth: number;
   eraserMode: 'bitmap' | 'vector';
   pattern: 'blank' | 'ruled' | 'grid' | 'dots';
   paperColor: string;

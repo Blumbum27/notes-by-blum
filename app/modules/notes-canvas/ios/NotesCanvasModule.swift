@@ -10,7 +10,7 @@ public final class NotesCanvasModule: Module {
       Prop("filePath") { (view, value: String) in view.load(value) }
       Prop("tool") { (view, value: String) in view.toolName = value; view.updateTool() }
       Prop("color") { (view, value: String) in view.inkColor = UIColor(hex: value); view.updateTool() }
-      Prop("width") { (view, value: Double) in view.inkWidth = value; view.updateTool() }
+      Prop("strokeWidth") { (view, value: Double) in view.inkWidth = value; view.updateTool() }
       Prop("eraserMode") { (view, value: String) in view.vectorEraser = value == "vector"; view.updateTool() }
       Prop("pattern") { (view, value: String) in view.paper.pattern = value; view.paper.setNeedsDisplay() }
       Prop("paperColor") { (view, value: String) in view.paper.backgroundColor = UIColor(hex: value) }

@@ -52,14 +52,14 @@ export default function LibraryScreen() {
   return <View style={styles.root}>
     <Stack.Screen options={{ title: current?.title ?? (section === 'favorites' ? 'Избранное' : section === 'trash' ? 'Корзина' : 'Документы'), headerLargeTitle: true,
       headerSearchBarOptions: { placeholder: 'Поиск по названиям', onChangeText: event => setSearch(event.nativeEvent.text) },
-      headerLeft: parentId ? () => <Host style={{ width: 110, height: 44 }}><Button label="Назад" systemImage="chevron.left" onPress={() => setParentId(current?.parentId ?? null)} /></Host> : undefined,
-      headerRight: () => <Host style={{ width: 72, height: 44 }}><Menu label="Меню" systemImage="person.crop.circle"><Button label="Настройки" systemImage="gearshape" onPress={() => router.push('/settings')} /><Button label="Корзина" systemImage="trash" onPress={() => { setSection('trash'); setParentId(null); }} /></Menu></Host> }} />
-    <View style={styles.sidebar}><Host style={{ flex: 1 }}><VStack alignment="leading" spacing={20} modifiers={[padding({ all: 20 })]}>
+      headerLeft: parentId ? () => <Host ignoreSafeArea="all" style={{ width: 110, height: 44 }}><Button label="Назад" systemImage="chevron.left" onPress={() => setParentId(current?.parentId ?? null)} /></Host> : undefined,
+      headerRight: () => <Host ignoreSafeArea="all" style={{ width: 72, height: 44 }}><Menu label="Меню" systemImage="person.crop.circle"><Button label="Настройки" systemImage="gearshape" onPress={() => router.push('/settings')} /><Button label="Корзина" systemImage="trash" onPress={() => { setSection('trash'); setParentId(null); }} /></Menu></Host> }} />
+    <View style={styles.sidebar}><Host ignoreSafeArea="all" style={{ flex: 1 }}><VStack alignment="leading" spacing={20} modifiers={[padding({ all: 20 })]}>
       <Button label="Документы" systemImage="folder" onPress={() => { setSection('documents'); setParentId(null); }} />
       <Button label="Избранное" systemImage="star" onPress={() => { setSection('favorites'); setParentId(null); }} />
     </VStack></Host></View>
     <View style={styles.content}>
-      <Host style={{ height: 64 }}><HStack spacing={18} modifiers={[padding({ horizontal: 16 })]}>
+      <Host ignoreSafeArea="all" style={{ height: 64 }}><HStack spacing={18} modifiers={[padding({ horizontal: 16 })]}>
         <Menu label={filter === 'all' ? 'Все' : filter === 'folder' ? 'Папки' : 'Документы'} systemImage="line.3.horizontal.decrease"><Button label="Все" onPress={() => setFilter('all')} /><Button label="Документы" onPress={() => setFilter('notebook')} /><Button label="Папки" onPress={() => setFilter('folder')} /></Menu>
         {section === 'documents' && <Menu label="Создать" systemImage="plus" modifiers={[buttonStyle('glassProminent')]}><Button label="Блокнот" systemImage="book.closed" onPress={() => { setTitle(''); setCreating('notebook'); }} /><Button label="Папка" systemImage="folder.badge.plus" onPress={() => { setTitle(''); setCreating('folder'); }} /></Menu>}
         <Menu label="Вид" systemImage={list ? 'list.bullet' : 'square.grid.2x2'}>
@@ -74,7 +74,7 @@ export default function LibraryScreen() {
           <Pressable accessibilityRole="button" accessibilityLabel={item.title} onPress={() => open(item)} style={[styles.preview, list && styles.smallPreview, item.kind === 'notebook' && { backgroundColor: item.cover }, selection?.includes(item.id) && styles.selected]}>
             <SymbolView name={item.kind === 'folder' ? 'folder.fill' : 'book.closed.fill'} tintColor={item.kind === 'folder' ? item.cover : '#FFFFFF'} size={item.kind === 'folder' ? 110 : 48} />
           </Pressable>
-          <View style={list ? { flex: 1 } : undefined}><Host style={{ height: 40, width: list ? 260 : 165 }}><Menu label={item.title} systemImage="chevron.down">
+          <View style={list ? { flex: 1 } : undefined}><Host ignoreSafeArea="all" style={{ height: 40, width: list ? 260 : 165 }}><Menu label={item.title} systemImage="chevron.down">
             {section === 'trash' ? <><Button label="Восстановить" onPress={() => void perform(() => repository.updateItem(item.id, { deletedAt: null }))} /><Button label="Удалить навсегда" role="destructive" onPress={() => Alert.alert('Удалить навсегда?', 'Восстановить документ будет невозможно.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: () => void perform(() => repository.deletePermanently(item.id)) }])} /></> : <>
               <Button label="Переименовать" onPress={() => rename(item)} /><Button label={item.favorite ? 'Убрать из избранного' : 'В избранное'} systemImage="star" onPress={() => void perform(() => repository.updateItem(item.id, { favorite: !item.favorite }))} />
               {item.kind === 'notebook' && <Button label="Дублировать" systemImage="doc.on.doc" onPress={() => void perform(() => repository.duplicateItem(item.id))} />}
@@ -84,7 +84,7 @@ export default function LibraryScreen() {
           </Menu></Host><Text numberOfLines={1} style={styles.date}>{new Date(item.modifiedAt).toLocaleDateString('ru', { day: 'numeric', month: 'short' })}{item.favorite ? ' · ★' : ''}</Text></View>
         </View>} />
     </View>
-    <Host style={styles.sheetHost}><BottomSheet isPresented={creating !== null} onIsPresentedChange={value => { if (!value) setCreating(null); }}><Form>
+    <Host ignoreSafeArea="all" style={styles.sheetHost}><BottomSheet isPresented={creating !== null} onIsPresentedChange={value => { if (!value) setCreating(null); }}><Form>
       <Section title={creating === 'folder' ? 'Новая папка' : 'Новый блокнот'}><TextField placeholder="Название" onTextChange={setTitle} /></Section>
       <Section title="Обложка"><Picker label="Цвет" selection={cover} onSelectionChange={setCover}>{Object.entries({ '#4377A8': 'Синий', '#E65A64': 'Красный', '#E3AD43': 'Жёлтый', '#6C9E76': 'Зелёный' }).map(([value, name]) => <NativeText key={value} modifiers={[tag(value)]}>{name}</NativeText>)}</Picker></Section>
       {creating === 'notebook' && <Section title="Бумага">
@@ -100,7 +100,7 @@ export default function LibraryScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, flexDirection: 'row', backgroundColor: '#FAFAFC' }, sidebar: { width: 230, backgroundColor: '#F0F1F5' }, content: { flex: 1 },
+  root: { flex: 1, paddingTop: 138, flexDirection: 'row', backgroundColor: '#FAFAFC' }, sidebar: { width: 230, backgroundColor: '#F0F1F5' }, content: { flex: 1 },
   grid: { padding: 16 }, item: { alignItems: 'center', padding: 12, minHeight: 260 }, listItem: { flexDirection: 'row', gap: 20, minHeight: 96, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#D1D1D6' },
   preview: { width: 140, height: 176, borderRadius: 10, alignItems: 'center', justifyContent: 'center' }, smallPreview: { width: 52, height: 68 }, selected: { borderWidth: 4, borderColor: '#007AFF' },
   date: { color: '#77777E', fontSize: 13, textAlign: 'center' }, empty: { padding: 64, alignItems: 'center', gap: 12 }, emptyTitle: { fontSize: 22, fontWeight: '600' }, sheetHost: { position: 'absolute', width: 1, height: 1 },

@@ -1,10 +1,11 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import * as SQLite from 'expo-sqlite';
+import { randomUUID } from 'expo-crypto';
 import type { LibraryItem, NotebookManifest, NotebookPage, PaperSettings } from './types';
 
 const library = new Directory(Paths.document, 'Library');
 let database: Promise<SQLite.SQLiteDatabase> | undefined;
-export const newId = () => globalThis.crypto.randomUUID();
+export const newId = () => randomUUID();
 export const packageDirectory = (id: string) => new Directory(library, `${id}.notebook`);
 export const drawingPath = (id: string, pageId: string) => new File(packageDirectory(id), 'pages', `${pageId}.drawing`).uri;
 
