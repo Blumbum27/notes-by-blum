@@ -11,7 +11,7 @@ extension NotesCanvasView {
       let view: UIView
       if object["kind"] as? String == "text" {
         let text = UITextView(); text.text = object["text"] as? String; text.backgroundColor = .clear
-        text.delegate = self; text.isScrollEnabled = false; format(text, object); view = text
+        text.delegate = self; text.isScrollEnabled = false; text.contentInsetAdjustmentBehavior = .never; format(text, object); view = text
       } else {
         let image = UIImageView(); image.contentMode = .scaleAspectFit
         if let asset = object["asset"] as? String, let root = packageURL { image.image = UIImage(contentsOfFile: root.appendingPathComponent(asset).path) }
