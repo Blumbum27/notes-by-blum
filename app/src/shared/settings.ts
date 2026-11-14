@@ -1,8 +1,8 @@
 import { File, Paths } from 'expo-file-system';
 import { useSyncExternalStore } from 'react';
 
-export type Settings = { horizontal: boolean; fingerDrawing: boolean; newTabs: boolean };
-const defaults: Settings = { horizontal: false, fingerDrawing: false, newTabs: true };
+export type Settings = { horizontal: boolean; fingerDrawing: boolean; newTabs: boolean; eraserAutoReturn: boolean };
+const defaults: Settings = { horizontal: false, fingerDrawing: false, newTabs: true, eraserAutoReturn: false };
 const listeners = new Set<() => void>();
 let current: Settings | undefined;
 export function readSettings(): Settings {

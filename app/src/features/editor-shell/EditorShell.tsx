@@ -59,7 +59,10 @@ export function EditorShell({ children, toolbar, notebook, activePage = 0, readO
     catch { Alert.alert('Не удалось выполнить действие', 'Изменения не применены. Попробуйте ещё раз.'); }
     finally { setBusy(false); }
   };
-  const save = async (pages: NotebookPage[]) => { onNotebookChange?.(await repository.saveNotebook({ ...notebook, pages })); };
+  const save = async (pages: NotebookPage[]) => {
+    const latest = await repository.readNotebook(notebook.id);
+    onNotebookChange?.(await repository.saveNotebook({ ...latest, pages: pages.map(page => ({ ...page, objects: latest.pages.find(value => value.id === page.id)?.objects ?? page.objects })) }));
+  };
   const update = (index: number, patch: Partial<NotebookPage>) => perform(() => save(notebook.pages.map((value, i) => i === index ? { ...value, ...patch } : value)));
   const add = (index: number, pattern?: Paper) => perform(async () => {
     const paper = { ...page.paper, ...(pattern ? { pattern } : {}) };
@@ -67,7 +70,7 @@ export function EditorShell({ children, toolbar, notebook, activePage = 0, readO
     await save(pages); onSelectPage?.(index);
   });
   const duplicate = (index: number) => perform(async () => {
-    const original = notebook.pages[index];
+    const original = (await repository.readNotebook(notebook.id)).pages[index];
     const copy = { ...original, id: repository.newId(), objects: original.objects.map(object => ({ ...object, id: repository.newId() })) };
     const source = new File(repository.drawingPath(notebook.id, original.id));
     if (source.exists) source.copy(new File(repository.drawingPath(notebook.id, copy.id)));

@@ -1,19 +1,25 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, View } from 'react-native';
+import { Alert, View, useWindowDimensions } from 'react-native';
+import { Button, ColorPicker, Host, HStack, Menu } from '@expo/ui/swift-ui';
+import { glassEffect, labelsHidden, padding } from '@expo/ui/swift-ui/modifiers';
 import * as ImagePicker from 'expo-image-picker';
 import { File, Paths } from 'expo-file-system';
 import type { CanvasCommand, TextFormat } from '../../../modules/notes-canvas';
 import { renderThumbnails } from '../../../modules/notes-canvas/rendering';
 import * as repository from '../../shared/documents/repository';
 import type { NotebookManifest, PageObject } from '../../shared/documents/types';
-import { useSettings } from '../../shared/settings';
+import { saveSettings, useSettings } from '../../shared/settings';
 import { EditorShell } from '../editor-shell/EditorShell';
 import { EditorHistory, EditorToolPanel, EditorTools, type EditorToolState } from './EditorTools';
 import { EditorPageRibbon } from './EditorPageRibbon';
 
 export default function NotebookScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  return <NotebookEditor key={id} id={id} />;
+}
+
+function NotebookEditor({ id }: { id: string }) {
   const [notebook, setNotebook] = useState<NotebookManifest>();
   const [tools, setTools] = useState<EditorToolState>({ tool: 'pen', color: '#151515', width: 3, eraserMode: 'bitmap' });
   const [active, setActive] = useState(0);
@@ -50,7 +56,6 @@ export default function NotebookScreen() {
   }, []);
   useEffect(() => {
     let current = true;
-    setNotebook(undefined); setActive(0);
     repository.readNotebook(id).then(value => { if (current) setNotebook(value); }).catch(() => Alert.alert('Не удалось открыть блокнот', 'Вернитесь в библиотеку и попробуйте снова.'));
     return () => { current = false; currentNotebook.current = undefined; };
   }, [id]);
@@ -61,10 +66,11 @@ export default function NotebookScreen() {
     const next = { ...document, pages: document.pages.map(page => page.id === pageId ? { ...page, objects } : page) };
     currentNotebook.current = next;
     setNotebook(next);
-    pendingSave.current = pendingSave.current.then(() => repository.saveNotebook(next));
+    pendingSave.current = pendingSave.current.catch(() => undefined).then(() => repository.saveNotebook(next));
     void pendingSave.current.catch(() => Alert.alert('Не удалось сохранить объекты', 'Не закрывайте документ и попробуйте снова.'));
   };
   const changeTools = (next: EditorToolState) => {
+    if (next.eraserAutoReturn !== undefined && next.eraserAutoReturn !== settings.eraserAutoReturn) saveSettings({ ...settings, eraserAutoReturn: next.eraserAutoReturn });
     if (next.tool === 'eraser' && ['pen', 'monoline', 'fountain', 'marker', 'pencil'].includes(tools.tool)) previousWriting.current = tools;
     if (next.tool !== tools.tool) {
       presets.current[tools.tool] = tools;
@@ -72,7 +78,7 @@ export default function NotebookScreen() {
     }
     setTools(next);
     presets.current[next.tool] = next;
-    try { new File(Paths.document, 'editor-presets.json').write(JSON.stringify(presets.current)); }
+    try { const temporary = new File(Paths.document, 'editor-presets.json.tmp'); temporary.write(JSON.stringify(presets.current)); temporary.move(new File(Paths.document, 'editor-presets.json'), { overwrite: true }); }
     catch { Alert.alert('Не удалось сохранить настройки инструмента'); }
     if (next.tool === 'image' && notebook) void (async () => {
       const pageId = notebook.pages[active].id;
@@ -91,7 +97,7 @@ export default function NotebookScreen() {
   if (!notebook) return null;
   return <EditorShell notebook={notebook} onNotebookChange={value => { currentNotebook.current = value; setNotebook(value); }} onBeforeAction={saveCanvases} activePage={active} readOnly={readOnly} onReadOnlyChange={setReadOnly} onSelectPage={setActive} onClearPage={() => send('clear')} toolbar={<EditorTools state={tools} onChange={changeTools} />}><View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, backgroundColor: '#E8EAEE' }}>
     <Stack.Screen options={{ headerShown: false }} />
-    {!readOnly && <><EditorToolPanel state={tools} onChange={changeTools} onClear={() => Alert.alert('Очистить страницу?', 'Все рукописные штрихи на странице будут удалены.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: () => send('clear') }])} />
+    {!readOnly && <><EditorToolPanel state={{ ...tools, eraserAutoReturn: settings.eraserAutoReturn }} onChange={changeTools} onClear={() => Alert.alert('Очистить страницу?', 'Все рукописные штрихи на странице будут удалены.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: () => send('clear') }])} />
     <EditorHistory {...history} onUndo={() => send('undo')} onRedo={() => send('redo')} />
     {tools.tool === 'text' && <EditorTextFormat textFormat={textFormat} setTextFormat={setTextFormat} />}</>}
     <EditorPageRibbon notebook={notebook} tools={tools} readOnly={readOnly} fingerDrawing={settings.fingerDrawing} horizontal={settings.horizontal} width={width} activePage={active} command={command} onLivePages={ids => { livePages.current = ids; }} onSaved={(pageId, id, success) => {
@@ -100,13 +106,9 @@ export default function NotebookScreen() {
       if (!success) { saveRequest.current = undefined; request.reject(new Error('Не удалось сохранить страницу')); return; }
       request.remaining.delete(pageId);
       if (!request.remaining.size) { saveRequest.current = undefined; request.resolve(); }
-    }} onActivePageChange={setActive} onHistoryChange={setHistory} textFormat={textFormat} onObjectsChange={saveObjects} onToolEnd={() => { if (tools.tool === 'eraser' && tools.eraserAutoReturn) changeTools(previousWriting.current); }} />
+    }} onActivePageChange={setActive} onHistoryChange={setHistory} textFormat={textFormat} onObjectsChange={saveObjects} onToolEnd={() => { if (tools.tool === 'eraser' && settings.eraserAutoReturn) changeTools(previousWriting.current); }} />
   </View></EditorShell>;
 }
-
-import { Button, ColorPicker, Host, HStack, Menu } from '@expo/ui/swift-ui';
-import { glassEffect, labelsHidden, padding } from '@expo/ui/swift-ui/modifiers';
-import { useWindowDimensions } from 'react-native';
 
 export function EditorTextFormat({ textFormat, setTextFormat }: { textFormat: TextFormat; setTextFormat: (format: TextFormat) => void }) {
   const { width } = useWindowDimensions();

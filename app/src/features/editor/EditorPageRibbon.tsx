@@ -23,7 +23,8 @@ export function EditorPageRibbon(props: EditorPageRibbonProps) {
   const list = useRef<FlatList<NotebookPage>>(null);
   const latest = useRef(props);
   useEffect(() => { latest.current = props; }, [props]);
-  useEffect(() => { props.onLivePages?.(props.notebook.pages.filter((_, index) => Math.abs(index - visible) <= 1).map(page => page.id)); }, [visible, props.notebook.pages, props.onLivePages]);
+  const { onLivePages, notebook } = props;
+  useEffect(() => { onLivePages?.(notebook.pages.filter((_, index) => Math.abs(index - visible) <= 1).map(page => page.id)); }, [visible, notebook.pages, onLivePages]);
   useEffect(() => { list.current?.scrollToIndex({ index: props.activePage, animated: false }); }, [props.activePage]);
   const viewability = useCallback(({ viewableItems }: { viewableItems: ViewToken<NotebookPage>[] }) => {
     const index = viewableItems[0]?.index;

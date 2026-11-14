@@ -1,7 +1,7 @@
 import { Button, ColorPicker, Host, HStack, Menu, Popover, VStack, Text } from '@expo/ui/swift-ui';
 import { useWindowDimensions } from 'react-native';
 import { useState } from 'react';
-import { buttonStyle, disabled, padding, glassEffect, labelsHidden } from '@expo/ui/swift-ui/modifiers';
+import { buttonStyle, disabled, padding, glassEffect, labelsHidden, labelStyle } from '@expo/ui/swift-ui/modifiers';
 import type { CanvasTool } from '../../../modules/notes-canvas';
 
 export type EditorToolState = {
@@ -12,7 +12,7 @@ type Props = { state: EditorToolState; onChange: (state: EditorToolState) => voi
 /** Центральная группа: оболочка размещает этот компонент между своими группами. */
 export function EditorTools({ state, onChange }: Props) {
   const choose = (tool: CanvasTool) => onChange({ ...state, tool });
-  return <Host style={{ height: 52, minWidth: 240 }}><HStack spacing={12} modifiers={[padding({ all: 6 })]}>
+  return <Host style={{ height: 52 }}><HStack spacing={12} modifiers={[padding({ all: 6 }), labelStyle('iconOnly')]}>
     <Button label="Лассо" systemImage="lasso" onPress={() => choose('lasso')} modifiers={[buttonStyle(state.tool === 'lasso' ? 'borderedProminent' : 'bordered')]} />
     <Button label="Письмо" systemImage="pencil.tip" onPress={() => choose('pen')} modifiers={[buttonStyle(['pen', 'monoline', 'fountain', 'pencil', 'marker'].includes(state.tool) ? 'borderedProminent' : 'bordered')]} />
     <Button label="Ластик" systemImage="eraser" onPress={() => choose('eraser')} modifiers={[buttonStyle(state.tool === 'eraser' ? 'borderedProminent' : 'bordered')]} />

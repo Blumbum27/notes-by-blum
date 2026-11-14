@@ -105,11 +105,7 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
   }
 
   func setDrawingPolicy(_ finger: Bool) {
-    #if targetEnvironment(simulator) && DEBUG
-    canvas.drawingPolicy = .anyInput
-    #else
     canvas.drawingPolicy = finger ? .anyInput : .pencilOnly
-    #endif
   }
 
   func updateTool() {
