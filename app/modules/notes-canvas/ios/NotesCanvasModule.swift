@@ -30,11 +30,19 @@ public final class NotesCanvasModule: Module {
       }
       Prop("filePath") { (view, value: String) in view.load(value) }
       Prop("tool") { (view, value: String) in view.toolName = value; view.updateTool() }
-      Prop("color") { (view, value: String) in view.inkColor = UIColor(hex: value); view.updateTool() }
+      Prop("color") { (view, value: String) in view.colorValue = value; view.inkColor = UIColor.note(value); view.updateTool() }
+      Prop("shapeKind") { (view, value: String) in view.shapeKind = value; view.updateTool() }
+      Prop("laserMode") { (view, value: String) in view.laserDot = value == "dot" }
+      Prop("ruler") { (view, value: Bool) in view.canvas.isRulerActive = value }
+      Prop("penOptions") { (view, value: [String: Any]) in
+        view.pressure = value["pressure"] as? Double ?? 1
+        view.stabilization = value["stabilization"] as? Double ?? 0
+        view.holdToSnap = value["holdToSnap"] as? Bool ?? true
+      }
       Prop("strokeWidth") { (view, value: Double) in view.inkWidth = value; view.updateTool() }
       Prop("eraserMode") { (view, value: String) in view.vectorEraser = value == "vector"; view.updateTool() }
       Prop("pattern") { (view, value: String) in view.paper.pattern = value; view.paper.setNeedsDisplay() }
-      Prop("paperColor") { (view, value: String) in view.paper.backgroundColor = UIColor(hex: value) }
+      Prop("paperColor") { (view, value: String) in view.paper.backgroundColor = UIColor.note(value) }
       Prop("readOnly") { (view, value: Bool) in view.readOnly = value; view.updateTool() }
       Prop("fingerDrawing") { (view, value: Bool) in view.setDrawingPolicy(value) }
       Prop("command") { (view, value: [String: Any]) in
@@ -44,6 +52,7 @@ public final class NotesCanvasModule: Module {
         case "undo": view.canvas.undoManager?.undo()
         case "redo": view.canvas.undoManager?.redo()
         case "clear": view.clearDrawing()
+        case "erase": view.erase(value["inks"] as? [String] ?? [])
         case "viewport": view.reportVisibleCenter()
         default: break
         }
@@ -114,6 +123,17 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
   var preview = false
   var objectViews: [String: UIView] = [:]
   var toolName = "pen"
+  var shapeKind = "freeform"
+  var laserDot = true
+  var pressure = 1.0
+  var stabilization = 0.0
+  var holdToSnap = true
+  var colorValue = "#151515"
+  var strokeCount = 0
+  let overlay = ToolOverlay()
+  lazy var overlayPan = UIPanGestureRecognizer(target: self, action: #selector(overlayDragged(_:)))
+  var dragStart = CGPoint.zero
+  var laserTrail: [CGPoint] = []
   var inkColor = UIColor.label
   var inkWidth = 3.0
   var vectorEraser = false
@@ -139,6 +159,9 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
     canvas.isOpaque = false
     canvas.isScrollEnabled = false
     canvas.delegate = self
+    content.addSubview(overlay)
+    overlayPan.maximumNumberOfTouches = 1
+    overlay.addGestureRecognizer(overlayPan)
     setDrawingPolicy(false)
     updateTool()
     NotificationCenter.default.addObserver(self, selector: #selector(saveBeforeBackground), name: UIApplication.willResignActiveNotification, object: nil)
@@ -150,7 +173,7 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
     super.layoutSubviews()
     content.transform = .identity
     content.frame = CGRect(origin: .zero, size: pageSize)
-    for view in [paper, backgroundImage, canvas, objectLayer] { view.frame = content.bounds }
+    for view in [paper, backgroundImage, canvas, objectLayer, overlay] { view.frame = content.bounds }
     canvas.contentSize = pageSize
     let sideways = Int(rotation) % 180 != 0
     let scale = bounds.width / (sideways ? pageSize.height : pageSize.width)
@@ -160,35 +183,42 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
 
   func setDrawingPolicy(_ finger: Bool) {
     canvas.drawingPolicy = finger ? .anyInput : .pencilOnly
+    overlayPan.allowedTouchTypes = (finger ? [UITouch.TouchType.direct, .pencil] : [.pencil]).map { NSNumber(value: $0.rawValue) }
   }
+
+  var overlayTool: Bool { toolName == "tape" || toolName == "laser" || (toolName == "shape" && shapeKind != "freeform") }
 
   func updateTool() {
     if preview { updatePreview(); return }
-    canvas.isUserInteractionEnabled = !loading && !readOnly && toolName != "text" && toolName != "image"
-    objectLayer.isUserInteractionEnabled = !readOnly && ["text", "image", "lasso"].contains(toolName)
-    objectLayer.capturesBackground = toolName == "text" || editingText != nil
-    if !["text", "lasso"].contains(toolName) { editingText?.resignFirstResponder() }
+    let objectTools = ["text", "image", "lasso", "sticky", "tape"]
+    canvas.isUserInteractionEnabled = !loading && !readOnly && !overlayTool && !["text", "image", "sticky"].contains(toolName)
+    objectLayer.isUserInteractionEnabled = !readOnly && objectTools.contains(toolName)
+    objectLayer.capturesBackground = toolName == "text" || toolName == "sticky" || editingText != nil
+    overlay.isUserInteractionEnabled = !loading && !readOnly && overlayTool
+    if !["text", "lasso", "sticky"].contains(toolName) { editingText?.resignFirstResponder() }
     if toolName == "eraser" {
       canvas.tool = PKEraserTool(vectorEraser ? .vector : .bitmap, width: inkWidth)
     } else if toolName == "lasso" {
       canvas.tool = PKLassoTool()
     } else {
-      let type: PKInk.InkType
-      switch toolName {
-      case "monoline": type = .monoline
-      case "fountain": type = .fountainPen
-      case "marker": type = .marker
-      case "pencil": type = .pencil
-      default: type = .pen
-      }
-      canvas.tool = PKInkingTool(type, color: inkColor, width: inkWidth)
+      canvas.tool = PKInkingTool(inkType(toolName), color: inkColor, width: inkWidth)
+    }
+  }
+
+  func inkType(_ name: String) -> PKInk.InkType {
+    switch name {
+    case "monoline", "shape", "drawShape": return .monoline
+    case "fountain": return .fountainPen
+    case "marker": return .marker
+    case "pencil": return .pencil
+    default: return .pen
     }
   }
 
   private func updatePreview() {
     isUserInteractionEnabled = false
     paper.isHidden = true
-    let type: PKInk.InkType = toolName == "pencil" ? .pencil : toolName == "marker" ? .marker : toolName == "monoline" ? .monoline : toolName == "fountain" ? .fountainPen : .pen
+    let type = inkType(toolName)
     let points = (0...80).map { index in
       let t = CGFloat(index) / 80
       let diameter = toolName == "marker" ? max(inkWidth, 12) : toolName == "pencil" ? max(inkWidth, 3) : 3 + sin(t * .pi) * 5
@@ -271,10 +301,72 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
     onVisibleCenter(["x": center.x, "y": center.y])
   }
 
-  private func replaceDrawing(_ drawing: PKDrawing) {
+  func replaceDrawing(_ drawing: PKDrawing) {
     let previous = canvas.drawing
     canvas.undoManager?.registerUndo(withTarget: self) { target in target.replaceDrawing(previous); target.persist(); target.notify() }
+    strokeCount = drawing.strokes.count
     canvas.drawing = drawing
+  }
+
+  func erase(_ inks: [String]) {
+    let types = Set(inks.flatMap { name -> [PKInk.InkType] in
+      switch name {
+      case "pen": return [.pen, .monoline, .fountainPen]
+      case "pencil": return [.pencil]
+      case "marker": return [.marker]
+      default: return []
+      }
+    })
+    var drawing = canvas.drawing
+    drawing.strokes.removeAll { types.contains($0.ink.inkType) }
+    guard drawing.strokes.count != canvas.drawing.strokes.count else { return }
+    replaceDrawing(drawing)
+    persist()
+  }
+
+  /// Заменяет только что нарисованный штрих: фигура для «Фигур» и Draw Shape, сглаживание и нажим для остальных перьев.
+  private func adjustedStroke(_ stroke: PKStroke) -> PKStroke? {
+    let points = stroke.path.map { $0.location.applying(stroke.transform) }
+    let width = stroke.path.reduce(0) { $0 + $1.size.width } / CGFloat(max(stroke.path.count, 1))
+    if toolName == "shape" || toolName == "drawShape" {
+      if toolName == "drawShape", holdToSnap, let last = stroke.path.last {
+        let held = Date().timeIntervalSince(stroke.path.creationDate.addingTimeInterval(last.timeOffset))
+        guard held > 0.45 else { return nil }
+      }
+      return ShapeGeometry.recognize(points).map { ShapeGeometry.stroke($0, ink: stroke.ink, width: width) }
+    }
+    guard stabilization > 0 || pressure < 1 else { return nil }
+    return ShapeGeometry.adjust(stroke, stabilization: stabilization, pressure: pressure)
+  }
+
+  @objc func overlayDragged(_ gesture: UIPanGestureRecognizer) {
+    let point = gesture.location(in: overlay)
+    switch gesture.state {
+    case .began:
+      dragStart = point; laserTrail = [point]; overlay.clear()
+      if toolName == "laser" { overlay.laser(laserTrail, dot: laserDot) }
+    case .changed:
+      if toolName == "laser" {
+        laserTrail.append(point); if laserTrail.count > 40 { laserTrail.removeFirst() }
+        overlay.laser(laserDot ? [point] : laserTrail, dot: laserDot)
+      } else if toolName == "tape" {
+        overlay.preview.lineCap = .butt
+        overlay.showPath([dragStart, point], color: UIColor.note(colorValue).withAlphaComponent(0.85), width: inkWidth)
+      } else {
+        overlay.preview.lineCap = .round
+        overlay.showPath(ShapeGeometry.drag(shapeKind, from: dragStart, to: point), color: inkColor, width: inkWidth * ShapeGeometry.inkPointScale)
+      }
+    case .ended:
+      if toolName == "laser" { overlay.fadeOut(); return }
+      overlay.clear()
+      if toolName == "tape" { addTape(from: dragStart, to: point); return }
+      guard ShapeGeometry.distance(dragStart, point) > 8 else { return }
+      var drawing = canvas.drawing
+      drawing.strokes.append(ShapeGeometry.stroke(ShapeGeometry.drag(shapeKind, from: dragStart, to: point), ink: PKInk(.monoline, color: inkColor), width: inkWidth * ShapeGeometry.inkPointScale))
+      replaceDrawing(drawing); persist(); notify()
+    default:
+      if toolName == "laser" { overlay.fadeOut() } else { overlay.clear() }
+    }
   }
 
   func notify() {
@@ -284,6 +376,14 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
     onDrawingChange(["canUndo": undo, "canRedo": redo])
   }
   func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+    let strokes = canvas.drawing.strokes
+    if !loading, strokes.count == strokeCount + 1, canvas.tool is PKInkingTool, let last = strokes.last, let adjusted = adjustedStroke(last) {
+      var drawing = canvas.drawing
+      drawing.strokes[drawing.strokes.count - 1] = adjusted
+      strokeCount = drawing.strokes.count
+      canvas.drawing = drawing
+    }
+    strokeCount = canvas.drawing.strokes.count
     guard !loading else { return }
     drawingDirty = true
     saveWork?.cancel()
@@ -310,13 +410,5 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
       backgroundImage.image = UIImage(contentsOfFile: url.path)
       if backgroundImage.image == nil { onError(["message": "Не удалось открыть изображение фона."]) }
     }
-  }
-}
-
-private extension UIColor {
-  convenience init(hex: String) {
-    let value = UInt64(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0
-    self.init(red: CGFloat((value >> 16) & 255) / 255, green: CGFloat((value >> 8) & 255) / 255,
-      blue: CGFloat(value & 255) / 255, alpha: 1)
   }
 }

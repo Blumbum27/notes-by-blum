@@ -11,7 +11,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { documentImport } from '../../../modules/document-import';
 import * as repository from '../../shared/documents/repository';
-import { defaultPaper, type LibraryItem, type PaperSettings } from '../../shared/documents/types';
+import { defaultPaper, paperColorNames, paperNames, paperOrder, paperSizes, type LibraryItem, type PaperSettings } from '../../shared/documents/types';
 
 export default function LibraryScreen() {
   const { width } = useWindowDimensions();
@@ -116,9 +116,9 @@ export default function LibraryScreen() {
       <Section title={creating === 'folder' ? 'Новая папка' : 'Новый блокнот'}><TextField placeholder="Название" onTextChange={setTitle} /></Section>
       <Section title="Обложка"><Picker label="Цвет" selection={cover} onSelectionChange={setCover}>{Object.entries({ '#4377A8': 'Синий', '#E65A64': 'Красный', '#E3AD43': 'Жёлтый', '#6C9E76': 'Зелёный' }).map(([value, name]) => <NativeText key={value} modifiers={[tag(value)]}>{name}</NativeText>)}</Picker></Section>
       {creating === 'notebook' && <Section title="Бумага">
-        <Picker label="Шаблон" selection={paper.pattern} onSelectionChange={value => setPaper({ ...paper, pattern: value as PaperSettings['pattern'] })}>{Object.entries({ blank: 'Без линий', ruled: 'Линейка', grid: 'Клетка', dots: 'Точки' }).map(([value, name]) => <NativeText key={value} modifiers={[tag(value)]}>{name}</NativeText>)}</Picker>
-        <Picker label="Цвет бумаги" selection={paper.color} onSelectionChange={value => setPaper({ ...paper, color: value as PaperSettings['color'] })}><NativeText modifiers={[tag('white')]}>Белая</NativeText><NativeText modifiers={[tag('yellow')]}>Жёлтая</NativeText></Picker>
-        <Picker label="Размер" selection={paper.size} onSelectionChange={value => setPaper({ ...paper, size: value as PaperSettings['size'] })}><NativeText modifiers={[tag('A4')]}>A4</NativeText><NativeText modifiers={[tag('Letter')]}>Letter</NativeText></Picker>
+        <Picker label="Шаблон" selection={paper.pattern} onSelectionChange={value => setPaper({ ...paper, pattern: value as PaperSettings['pattern'] })}>{paperOrder.map(value => <NativeText key={value} modifiers={[tag(value)]}>{paperNames[value]}</NativeText>)}</Picker>
+        <Picker label="Цвет бумаги" selection={paper.color} onSelectionChange={value => setPaper({ ...paper, color: value as PaperSettings['color'] })}>{(Object.keys(paperColorNames) as PaperSettings['color'][]).map(value => <NativeText key={value} modifiers={[tag(value)]}>{paperColorNames[value]}</NativeText>)}</Picker>
+        <Picker label="Размер" selection={paper.size} onSelectionChange={value => setPaper({ ...paper, size: value as PaperSettings['size'] })}>{paperSizes.map(value => <NativeText key={value} modifiers={[tag(value)]}>{value}</NativeText>)}</Picker>
         <Picker label="Ориентация" selection={paper.orientation} modifiers={[pickerStyle('segmented')]} onSelectionChange={value => setPaper({ ...paper, orientation: value as PaperSettings['orientation'] })}><NativeText modifiers={[tag('portrait')]}>Портрет</NativeText><NativeText modifiers={[tag('landscape')]}>Альбом</NativeText></Picker>
       </Section>}
       <Button label="Создать" modifiers={[buttonStyle('glassProminent')]} onPress={() => void perform(async () => { if (creating) await repository.createItem(title, creating, parentId, cover, paper); setCreating(null); })} /><Button label="Отмена" role="cancel" onPress={() => setCreating(null)} />

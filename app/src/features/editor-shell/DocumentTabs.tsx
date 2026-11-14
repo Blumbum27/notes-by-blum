@@ -1,5 +1,5 @@
-import { Button, Divider, Host, HStack, Popover, Spacer, Text, TextField, VStack, useNativeState } from '@expo/ui/swift-ui';
-import { buttonStyle, font, foregroundStyle, frame, labelStyle, onDisappear, onSubmit, padding, textFieldStyle } from '@expo/ui/swift-ui/modifiers';
+import { Button, Divider, Host, HStack, Image as Symbol, Popover, Spacer, Text, TextField, VStack, useNativeState } from '@expo/ui/swift-ui';
+import { accessibilityLabel, buttonStyle, font, foregroundStyle, frame, onDisappear, onSubmit, padding, textFieldStyle } from '@expo/ui/swift-ui/modifiers';
 import { File, Paths } from 'expo-file-system';
 import { memo, useEffect, useState, useSyncExternalStore } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text as RNText, View } from 'react-native';
@@ -49,7 +49,7 @@ function DocumentMenu({ notebook, activePage, onRename, onMove, onCloseOthers }:
     else if (!next) title.set(notebook.title);
   };
   return <Popover isPresented={open} onIsPresentedChange={value => { if (!value) commit(); setOpen(value); }}>
-    <Popover.Trigger><Button label="Меню документа" systemImage="chevron.down" modifiers={[labelStyle('iconOnly'), buttonStyle('plain'), frame({ width: 24, height: 36 })]} onPress={() => setOpen(true)} /></Popover.Trigger>
+    <Popover.Trigger><Button onPress={() => setOpen(true)} modifiers={[buttonStyle('plain'), accessibilityLabel('Меню документа')]}><Symbol systemName="chevron.down" size={10} color="#3E4645" modifiers={[font({ size: 10, weight: 'bold' }), frame({ width: 22, height: 34 })]} /></Button></Popover.Trigger>
     <Popover.Content><VStack alignment="leading" spacing={16} modifiers={[padding({ all: 16 }), frame({ width: 340 }), onDisappear(afterDismiss)]}>
       <TextField text={title} placeholder="Название блокнота" onFocusChange={focused => { if (!focused) commit(); }} modifiers={[textFieldStyle('roundedBorder'), font({ textStyle: 'headline' }), frame({ height: 56 }), onSubmit(commit)]} />
       <VStack spacing={0}>
@@ -84,16 +84,16 @@ export const DocumentTabs = memo(function DocumentTabs({ notebook, activePage, r
     else publishTabs([...(readSettings().newTabs ? openDocuments : []), { id: notebook.id, title: notebook.title }]);
   }, [notebook.id, notebook.title]);
   return <View style={styles.row}>
-    <Host style={{ width: 60, height: 36 }}><Button label="Домой" systemImage="house" modifiers={[labelStyle('iconOnly'), buttonStyle('plain'), frame({ width: 60, height: 36 })]} onPress={onHome} /></Host>
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 4 }}>
+    <Host style={{ width: 52, height: 34 }}><Button onPress={onHome} modifiers={[buttonStyle('plain'), accessibilityLabel('Домой')]}><Symbol systemName="house" size={16} color="#2A2F2E" modifiers={[font({ size: 16, weight: 'regular' }), frame({ width: 52, height: 34 })]} /></Button></Host>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingRight: 8 }}>
       {tabs.map(tab => {
         const active = tab.id === notebook.id;
         return <GlassView key={tab.id} glassEffectStyle={active ? 'regular' : 'clear'} tintColor={active && !readOnly ? '#D7EBEB' : undefined} style={styles.tab}>
           <Pressable accessibilityRole="tab" accessibilityLabel={tab.title} accessibilityState={{ selected: active }} onPress={() => onSwitch(tab.id)} style={styles.title}>
-            <RNText numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 14, color: active ? '#111313' : '#5A6464', fontWeight: active ? '600' : '400' }}>{tab.title}</RNText>
+            <RNText numberOfLines={1} ellipsizeMode="tail" style={{ fontSize: 13, color: active ? '#151716' : '#5A6464', fontWeight: active ? '600' : '400' }}>{tab.title}</RNText>
           </Pressable>
-          {active && <Host style={{ width: 24, height: 36 }}><DocumentMenu notebook={notebook} activePage={activePage} onRename={onRename} onMove={onMove} onCloseOthers={onCloseOthers} /></Host>}
-          <Host style={{ width: 36, height: 36 }}><Button label={`Закрыть вкладку ${tab.title}`} systemImage="xmark" modifiers={[labelStyle('iconOnly'), buttonStyle('plain'), frame({ width: 36, height: 36 })]} onPress={() => onClose(tab.id)} /></Host>
+          {active && <Host style={{ width: 22, height: 34 }}><DocumentMenu notebook={notebook} activePage={activePage} onRename={onRename} onMove={onMove} onCloseOthers={onCloseOthers} /></Host>}
+          <Host style={{ width: 30, height: 34 }}><Button onPress={() => onClose(tab.id)} modifiers={[buttonStyle('plain'), accessibilityLabel(`Закрыть вкладку ${tab.title}`)]}><Symbol systemName="xmark" size={9} color={active ? '#4A5251' : '#7D8584'} modifiers={[font({ size: 9, weight: 'bold' }), frame({ width: 30, height: 34 })]} /></Button></Host>
         </GlassView>;
       })}
     </ScrollView>
@@ -101,7 +101,7 @@ export const DocumentTabs = memo(function DocumentTabs({ notebook, activePage, r
 });
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', height: 36 },
-  tab: { width: 196, height: 36, flexDirection: 'row', alignItems: 'center', borderRadius: 9 },
-  title: { flex: 1, justifyContent: 'center', height: 36, paddingLeft: 12 },
+  row: { flexDirection: 'row', height: 34, marginBottom: 4 },
+  tab: { width: 184, height: 34, flexDirection: 'row', alignItems: 'center', borderRadius: 10 },
+  title: { flex: 1, justifyContent: 'center', height: 34, paddingLeft: 12 },
 });

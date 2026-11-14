@@ -1,26 +1,30 @@
 import { useLocalSearchParams, usePreventZoomTransitionDismissal } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, type ComponentType } from 'react';
-import { Alert, useWindowDimensions, View } from 'react-native';
-import { Button, ColorPicker, Host, HStack, Image, Popover, Slider, Stepper, Text, VStack } from '@expo/ui/swift-ui';
-import { accessibilityLabel, buttonStyle, font, frame, glassEffect, labelsHidden, labelStyle, padding } from '@expo/ui/swift-ui/modifiers';
+import { Alert, View } from 'react-native';
+import { Button, ColorPicker, Divider, Host, HStack, Image, Popover, Slider, Spacer, Stepper, Text, VStack } from '@expo/ui/swift-ui';
+import { accessibilityLabel, background, buttonStyle, font, foregroundStyle, frame, glassEffect, labelsHidden, padding } from '@expo/ui/swift-ui/modifiers';
 import * as ImagePicker from 'expo-image-picker';
 import { File, Paths } from 'expo-file-system';
-import { clearCanvasPage, saveAllCanvases, type CanvasCommand, type TextFormat } from '../../../modules/notes-canvas';
+import { clearCanvasPage, saveAllCanvases, type CanvasCommand, type InkGroup, type TextFormat } from '../../../modules/notes-canvas';
 import { renderThumbnails } from '../../../modules/notes-canvas/rendering';
 import * as repository from '../../shared/documents/repository';
-import type { NotebookManifest, PageObject } from '../../shared/documents/types';
+import { pageSize, type NotebookManifest, type PageObject } from '../../shared/documents/types';
 import { saveSettings, useSettings } from '../../shared/settings';
-import { defaultPresets, EditorHistory, EditorToolPanel, EditorTools, writingGroup, writingTool, type EditorToolState, type HistoryHandle } from './EditorTools';
+import { defaultPresets, EditorHistory, EditorToolPanel, EditorTools, presetKey, writingTool, type EditorToolState, type HistoryHandle } from './EditorTools';
 import { EditorPageRibbon } from './EditorPageRibbon';
 
 const thumbnailWarnings = new Set<string>();
+/** Типы содержимого для «Удалить некоторые элементы»: рукописные штрихи по виду инструмента и объекты страницы. */
+export type ElementKind = InkGroup | 'text' | 'image' | 'sticky' | 'tape';
+type CommandPayload = CanvasCommand extends infer C ? C extends CanvasCommand ? Omit<C, 'id'> : never : never;
 
 export type EditorFrameProps = {
   notebook: NotebookManifest; onNotebookChange: (value: NotebookManifest) => void;
   thumbnailRevision: number;
   onBeforeAction: () => Promise<void>; activePage: number; readOnly: boolean;
   onReadOnlyChange: (value: boolean) => void; onSelectPage: (index: number) => void;
-  onClearPage: () => void; onClearPageAt?: (index: number) => void; toolbar: React.ReactNode; children: React.ReactNode;
+  onClearPage: () => void; onClearPageAt?: (index: number) => void; onEraseElements: (kinds: ElementKind[]) => void;
+  toolbar: React.ReactNode; children: React.ReactNode;
 };
 
 export default function NotebookScreen({ frame }: { frame: ComponentType<EditorFrameProps> }) {
@@ -45,8 +49,10 @@ function NotebookEditor({ initial, frame: EditorShell }: { initial: NotebookMani
   const [editingText, setEditingText] = useState(false);
   const [textHint, setTextHint] = useState(true);
   const [active, setActive] = useState(0);
+  const [scrollRequest, setScrollRequest] = useState<{ index: number; id: number }>();
+  const [ruler, setRuler] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
-  const [width, setWidth] = useState(650);
+  const [width, setWidth] = useState(0);
   const history = useRef<HistoryHandle>(null);
   const [command, setCommand] = useState<CanvasCommand>();
   const [textFormat, setTextFormat] = useState<TextFormat>({ color: '#151515', fontSize: 24, fontFamily: 'System', bold: false, italic: false, alignment: 'left' });
@@ -122,7 +128,7 @@ function NotebookEditor({ initial, frame: EditorShell }: { initial: NotebookMani
     thumbnailSignatures.current = new Map(pageSignatures(initial).filter(([pageId]) => new File(repository.packageDirectory(initial.id), 'thumbnails', `${pageId}.png`).exists));
     return () => { currentNotebook.current = undefined; };
   }, [initial]);
-  const send = (action: CanvasCommand['action']) => setCommand({ id: Date.now(), action });
+  const send = (payload: CommandPayload) => setCommand({ id: Date.now(), ...payload } as CanvasCommand);
   const saveObjects = useCallback((pageId: string, objects: PageObject[]) => {
     const document = currentNotebook.current;
     if (!document) return;
@@ -137,12 +143,12 @@ function NotebookEditor({ initial, frame: EditorShell }: { initial: NotebookMani
     const previous = toolsRef.current;
     if (next.tool === 'eraser' && previous.tool !== 'eraser') { previousWriting.current = previous; setEraserPanel(true); }
     if (next.tool !== previous.tool) {
-      const key = writingTool(next.tool) ? writingGroup(next.tool) : next.tool;
-      if (!(writingTool(previous.tool) && writingTool(next.tool) && writingGroup(previous.tool) === 'pen' && writingGroup(next.tool) === 'pen')) next = presets.current[key] ?? next;
+      const key = presetKey(next.tool);
+      if (presetKey(previous.tool) !== key) next = { ...next, ...defaultPresets[key], ...presets.current[key] };
     }
     toolsRef.current = next;
     setTools(next);
-    const key = writingTool(next.tool) ? writingGroup(next.tool) : next.tool;
+    const key = presetKey(next.tool);
     if (writingTool(next.tool)) lastWriting.current = key;
     presets.current[key] = next;
     clearTimeout(presetsTimer.current);
@@ -150,7 +156,7 @@ function NotebookEditor({ initial, frame: EditorShell }: { initial: NotebookMani
     if (next.tool === 'image' && notebook) void (async () => {
       const pageId = notebook.pages[active].id;
       try {
-        const center = await new Promise<{ x: number; y: number }>(resolve => { visibleCenterRequest.current = resolve; send('viewport'); });
+        const center = await new Promise<{ x: number; y: number }>(resolve => { visibleCenterRequest.current = resolve; send({ action: 'viewport' }); });
         const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
         if (result.canceled || currentNotebook.current?.id !== notebook.id) return;
         const asset = result.assets[0]; const name = `${repository.newId()}.${asset.uri.split('.').pop() ?? 'jpg'}`;
@@ -158,10 +164,7 @@ function NotebookEditor({ initial, frame: EditorShell }: { initial: NotebookMani
         new File(asset.uri).copy(destination);
         const page = currentNotebook.current.pages.find(page => page.id === pageId);
         if (!page) return;
-        const short = page.paper.size === 'Letter' ? 612 : 595;
-        const ratio = page.paper.size === 'Letter' ? 11 / 8.5 : Math.SQRT2;
-        const pageWidth = page.paper.orientation === 'portrait' ? short : short * ratio;
-        const pageHeight = page.paper.orientation === 'portrait' ? short * ratio : short;
+        const { width: pageWidth, height: pageHeight } = pageSize(page.paper);
         const imageWidth = Math.min(260, pageWidth * 0.6, pageHeight * 0.6 * asset.width / asset.height);
         const imageHeight = imageWidth * asset.height / asset.width;
         saveObjects(page.id, [...page.objects, { id: repository.newId(), kind: 'image', asset: `assets/${name}`, x: Math.max(0, Math.min(pageWidth - imageWidth, center.x - imageWidth / 2)), y: Math.max(0, Math.min(pageHeight - imageHeight, center.y - imageHeight / 2)), width: imageWidth, height: imageHeight, rotation: 0 }]);
@@ -169,9 +172,23 @@ function NotebookEditor({ initial, frame: EditorShell }: { initial: NotebookMani
       finally { if (currentNotebook.current?.id === notebook.id) { toolsRef.current = previous; setTools(previous); } }
     })();
   };
-  const selectPage = (index: number) => {
-    if (index === active) return;
-    void saveCanvases().then(() => setActive(index)).catch(() => Alert.alert('Не удалось сохранить страницу'));
+  const saveInBackground = () => void saveCanvases().catch(() => Alert.alert('Не удалось сохранить страницу'));
+  // Прокрутка пальцем только отмечает активную страницу; переход из меню ещё и прокручивает к ней.
+  const scrolledTo = (index: number) => { if (index !== active) { setActive(index); saveInBackground(); } };
+  const selectPage = (index: number) => { setScrollRequest({ index, id: Date.now() }); scrolledTo(index); };
+  const eraseElements = (kinds: ElementKind[]) => {
+    const page = currentNotebook.current?.pages[active];
+    if (!page) return;
+    const inks = kinds.filter((kind): kind is InkGroup => kind === 'pen' || kind === 'pencil' || kind === 'marker');
+    if (inks.length) send({ action: 'erase', inks });
+    const objects = page.objects.filter(object => !kinds.includes(object.kind));
+    if (objects.length !== page.objects.length) saveObjects(page.id, objects);
+  };
+  const narrow = width > 0 && width < 760;
+  const panelTop = narrow ? 62 : 8;
+  const textEditingChange = (value: boolean, kind?: 'text' | 'sticky') => {
+    setEditingText(value && kind !== 'sticky');
+    if (value && kind !== 'sticky' && toolsRef.current.tool === 'text') { const next = { ...toolsRef.current, tool: 'lasso' as const }; toolsRef.current = next; setTools(next); }
   };
   const clearPageAt = (index: number) => {
     const document = currentNotebook.current;
@@ -179,27 +196,62 @@ function NotebookEditor({ initial, frame: EditorShell }: { initial: NotebookMani
     if (!document || !pageId) return;
     void saveCanvases(pageId).catch(() => Alert.alert('Не удалось очистить страницу', 'Повторите попытку.'));
   };
-  return <EditorShell notebook={notebook} thumbnailRevision={thumbnailRevision} onNotebookChange={value => { currentNotebook.current = value; setNotebook(value); void saveCanvases().catch(() => Alert.alert('Не удалось сохранить страницу')); }} onBeforeAction={saveCanvases} activePage={active} readOnly={readOnly} onReadOnlyChange={setReadOnly} onSelectPage={selectPage} onClearPage={() => clearPageAt(active)} onClearPageAt={clearPageAt} toolbar={<EditorTools state={tools} onChange={changeTools} onWriting={() => changeTools(presets.current[lastWriting.current])} onRepeatEraser={() => setEraserPanel(value => !value)} />}><View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, backgroundColor: '#F4F6F5' }}>
-    <EditorPageRibbon notebook={notebook} tools={tools} readOnly={readOnly} fingerDrawing={settings.fingerDrawing} horizontal={settings.horizontal} width={width} activePage={active} command={command} onVisibleCenter={center => { visibleCenterRequest.current?.(center); visibleCenterRequest.current = undefined; }} onActivePageChange={selectPage} onHistoryChange={value => history.current?.update(value)} textFormat={textFormat} onObjectsChange={saveObjects} onTextEditingChange={value => { setEditingText(value); if (value && toolsRef.current.tool === 'text') { const next = { ...toolsRef.current, tool: 'lasso' as const }; toolsRef.current = next; setTools(next); } }} onToolEnd={() => { void saveCanvases().catch(() => Alert.alert('Не удалось сохранить страницу')); if (toolsRef.current.tool === 'eraser' && settings.eraserAutoReturn) changeTools(previousWriting.current); }} />
-    {!readOnly && <>
-      <View style={{ position: 'absolute', top: 8, left: 8 }}><EditorHistory ref={history} onUndo={() => send('undo')} onRedo={() => send('redo')} /></View>
-      {(tools.tool !== 'eraser' || eraserPanel) && <View pointerEvents="box-none" style={{ position: 'absolute', top: width < 760 ? 61 : 8, left: width < 760 ? 12 : Math.max(104, (width - Math.min(tools.tool === 'eraser' ? 394 : 620, width - 116)) / 2) }}><EditorToolPanel state={tools} onChange={changeTools} eraserAutoReturn={settings.eraserAutoReturn} onEraserAutoReturnChange={eraserAutoReturn => saveSettings({ ...settings, eraserAutoReturn })} availableWidth={width < 760 ? width - 24 : width - 116} onClear={() => Alert.alert('Очистить страницу?', 'Все рукописные штрихи на странице будут удалены.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: () => clearPageAt(active) }])} /></View>}
-      {(tools.tool === 'text' || editingText) && <View style={{ position: 'absolute', top: width < 760 ? 61 : 8, alignSelf: 'center' }}><EditorTextFormat textFormat={textFormat} setTextFormat={setTextFormat} /></View>}
-      {tools.tool === 'text' && textHint && <View style={{ position: 'absolute', bottom: 24, alignSelf: 'center' }}><Host style={{ height: 45, width: 340 }}><HStack spacing={8} modifiers={[padding({ horizontal: 14 }), frame({ height: 45 }), glassEffect({ shape: 'capsule' })]}><Image systemName="info.circle" size={20} /><Text>Добавьте текстовое поле касанием.</Text><Button label="Скрыть подсказку" systemImage="xmark" onPress={() => setTextHint(false)} modifiers={[labelStyle('iconOnly'), buttonStyle('plain')]} /></HStack></Host></View>}
-    </>}
-  </View></EditorShell>;
+  return <EditorShell notebook={notebook} thumbnailRevision={thumbnailRevision} onNotebookChange={value => { currentNotebook.current = value; setNotebook(value); saveInBackground(); }} onBeforeAction={saveCanvases} activePage={active} readOnly={readOnly} onReadOnlyChange={setReadOnly} onSelectPage={selectPage} onClearPage={() => clearPageAt(active)} onClearPageAt={clearPageAt} onEraseElements={eraseElements}
+    toolbar={<EditorTools state={tools} onChange={changeTools} ruler={ruler} onRulerChange={setRuler} onWriting={() => changeTools({ ...defaultPresets[lastWriting.current], ...presets.current[lastWriting.current] })} onRepeatEraser={() => setEraserPanel(value => !value)} />}>
+    <View onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, backgroundColor: '#EEF0EF' }}>
+      <EditorPageRibbon notebook={notebook} tools={tools} readOnly={readOnly} fingerDrawing={settings.fingerDrawing} ruler={ruler && !readOnly} horizontal={settings.horizontal}
+        insetTop={readOnly ? 12 : panelTop + 46 + 12} activePage={active} scrollRequest={scrollRequest} command={command} thumbnailRevision={thumbnailRevision}
+        onVisibleCenter={center => { visibleCenterRequest.current?.(center); visibleCenterRequest.current = undefined; }} onActivePageChange={scrolledTo}
+        onHistoryChange={value => history.current?.update(value)} textFormat={textFormat} onObjectsChange={saveObjects} onTextEditingChange={textEditingChange}
+        onToolEnd={() => { saveInBackground(); if (toolsRef.current.tool === 'eraser' && settings.eraserAutoReturn) changeTools(previousWriting.current); }} />
+      {!readOnly && width > 0 && <>
+        <View style={{ position: 'absolute', top: 8, left: 12 }}><EditorHistory ref={history} onUndo={() => send({ action: 'undo' })} onRedo={() => send({ action: 'redo' })} /></View>
+        {(tools.tool !== 'eraser' || eraserPanel) && <View pointerEvents="box-none" style={{ position: 'absolute', top: panelTop, left: narrow ? 12 : 112, right: 12, alignItems: narrow ? 'flex-start' : 'center' }}>
+          {(tools.tool === 'text' || editingText) ? <EditorTextFormat textFormat={textFormat} setTextFormat={setTextFormat} availableWidth={width - (narrow ? 24 : 224)} />
+            : <EditorToolPanel state={tools} onChange={changeTools} eraserAutoReturn={settings.eraserAutoReturn} onEraserAutoReturnChange={eraserAutoReturn => saveSettings({ ...settings, eraserAutoReturn })} availableWidth={width - (narrow ? 24 : 224)} onClear={() => Alert.alert('Очистить страницу?', 'Все рукописные штрихи на странице будут удалены.', [{ text: 'Отмена', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: () => clearPageAt(active) }])} />}
+        </View>}
+        {tools.tool === 'text' && textHint && <View style={{ position: 'absolute', bottom: 20, alignSelf: 'center' }}><Host style={{ height: 44, width: 330 }}><HStack spacing={10} modifiers={[padding({ leading: 16, trailing: 6 }), frame({ height: 44 }), glassEffect({ shape: 'capsule' })]}><Image systemName="hand.tap" size={15} color="#0F8FA8" /><Text modifiers={[font({ size: 14 })]}>Коснитесь страницы, чтобы добавить текст</Text><Button onPress={() => setTextHint(false)} modifiers={[buttonStyle('plain'), frame({ width: 32, height: 32 }), accessibilityLabel('Скрыть подсказку')]}><Image systemName="xmark" size={11} color="#6B7170" modifiers={[font({ size: 11, weight: 'semibold' })]} /></Button></HStack></Host></View>}
+      </>}
+    </View>
+  </EditorShell>;
 }
 
-export function EditorTextFormat({ textFormat, setTextFormat }: { textFormat: TextFormat; setTextFormat: (format: TextFormat) => void }) {
-  const { width } = useWindowDimensions();
+const textFamilies = [['Современный', 'System'], ['Классический', 'Georgia'], ['Технический', 'Menlo']] as const;
+const textInk = '#2E3433';
+
+export function EditorTextFormat({ textFormat, setTextFormat, availableWidth }: { textFormat: TextFormat; setTextFormat: (format: TextFormat) => void; availableWidth: number }) {
   const [open, setOpen] = useState<string>();
   const update = (patch: TextFormat) => setTextFormat({ ...textFormat, ...patch });
-  const families = [['Современный', 'System'], ['Классический', 'Georgia'], ['Технический', 'Menlo']];
-  return <Host style={{ height: 45, width: Math.min(394, width - 24), alignSelf: 'center' }}><HStack spacing={0} modifiers={[padding({ horizontal: 8 }), frame({ height: 45 }), glassEffect({ shape: 'capsule' })]}>
-    <ColorPicker label="Цвет текста" modifiers={[labelsHidden()]} selection={textFormat.color ?? '#151515'} onSelectionChange={color => setTextFormat({ ...textFormat, color })} />
-    <Popover isPresented={open === 'size'} onIsPresentedChange={value => setOpen(value ? 'size' : undefined)}><Popover.Trigger><Button label={`${Math.round(textFormat.fontSize ?? 24)} ⌄`} onPress={() => setOpen('size')} modifiers={[buttonStyle('plain'), frame({ width: 61, height: 45 }), accessibilityLabel('Размер шрифта')]} /></Popover.Trigger><Popover.Content><HStack spacing={12} modifiers={[padding({ all: 16 }), frame({ width: 399 })]}><Text>{Math.round(textFormat.fontSize ?? 24)}</Text><Slider value={textFormat.fontSize ?? 24} min={8} max={96} step={1} onValueChange={fontSize => update({ fontSize })} modifiers={[frame({ width: 205 })]} /><Stepper label="Размер" value={textFormat.fontSize ?? 24} min={8} max={96} onValueChange={fontSize => update({ fontSize })} modifiers={[labelsHidden()]} /></HStack></Popover.Content></Popover>
-    <Popover isPresented={open === 'font'} onIsPresentedChange={value => setOpen(value ? 'font' : undefined)}><Popover.Trigger><Button label={`${families.find(([, value]) => value === textFormat.fontFamily)?.[0] ?? 'Современный'} ⌄`} onPress={() => setOpen('font')} modifiers={[buttonStyle('plain'), frame({ width: 138, height: 45 })]} /></Popover.Trigger><Popover.Content><VStack spacing={0} modifiers={[padding({ all: 12 }), frame({ width: 245 })]}>{families.map(([label, fontFamily]) => <Button key={fontFamily} onPress={() => { update({ fontFamily }); setOpen(undefined); }} modifiers={[buttonStyle('plain')]}><Text modifiers={[font({ family: fontFamily === 'System' ? undefined : fontFamily, size: 17 }), frame({ width: 196, height: 53 })]}>{label}{textFormat.fontFamily === fontFamily ? ' ✓' : ''}</Text></Button>)}</VStack></Popover.Content></Popover>
-    <Popover isPresented={open === 'style'} onIsPresentedChange={value => setOpen(value ? 'style' : undefined)}><Popover.Trigger><Button label="B / I" onPress={() => setOpen('style')} modifiers={[buttonStyle('plain'), frame({ width: 45, height: 45 }), accessibilityLabel('Стиль текста')]} /></Popover.Trigger><Popover.Content><HStack spacing={0} modifiers={[padding({ all: 4 })]}><Button label="Жирный" systemImage="bold" onPress={() => update({ bold: !textFormat.bold })} modifiers={[labelStyle('iconOnly'), buttonStyle(textFormat.bold ? 'bordered' : 'plain'), frame({ width: 45, height: 45 })]} /><Button label="Курсив" systemImage="italic" onPress={() => update({ italic: !textFormat.italic })} modifiers={[labelStyle('iconOnly'), buttonStyle(textFormat.italic ? 'bordered' : 'plain'), frame({ width: 45, height: 45 })]} /></HStack></Popover.Content></Popover>
-    <Popover isPresented={open === 'alignment'} onIsPresentedChange={value => setOpen(value ? 'alignment' : undefined)}><Popover.Trigger><Button label="Выравнивание" systemImage={textFormat.alignment === 'center' ? 'text.aligncenter' : textFormat.alignment === 'right' ? 'text.alignright' : 'text.alignleft'} onPress={() => setOpen('alignment')} modifiers={[labelStyle('iconOnly'), buttonStyle('plain'), frame({ width: 45, height: 45 })]} /></Popover.Trigger><Popover.Content><HStack spacing={0} modifiers={[padding({ all: 4 })]}>{(['left', 'center', 'right'] as const).map((alignment, index) => <Button key={alignment} label={['По левому краю', 'По центру', 'По правому краю'][index]} systemImage={alignment === 'left' ? 'text.alignleft' : alignment === 'center' ? 'text.aligncenter' : 'text.alignright'} onPress={() => update({ alignment })} modifiers={[labelStyle('iconOnly'), buttonStyle(textFormat.alignment === alignment ? 'bordered' : 'plain'), frame({ width: 45, height: 45 })]} />)}</HStack></Popover.Content></Popover>
+  const size = Math.round(textFormat.fontSize ?? 24);
+  const family = textFamilies.find(([, value]) => value === textFormat.fontFamily)?.[0] ?? 'Современный';
+  const alignmentSymbol = textFormat.alignment === 'center' ? 'text.aligncenter' : textFormat.alignment === 'right' ? 'text.alignright' : 'text.alignleft';
+  const popover = (key: string, trigger: React.ReactElement, content: React.ReactElement) => <Popover isPresented={open === key} onIsPresentedChange={value => setOpen(value ? key : undefined)} attachmentAnchor="bottom" arrowEdge="top"><Popover.Trigger>{trigger}</Popover.Trigger><Popover.Content>{content}</Popover.Content></Popover>;
+  const chevron = <Image systemName="chevron.down" size={8} color="#6B7170" modifiers={[font({ size: 8, weight: 'semibold' })]} />;
+  const toggle = (label: string, symbol: 'bold' | 'italic' | 'underline' | 'strikethrough', value: boolean | undefined, patch: TextFormat) => <Button onPress={() => update(patch)} modifiers={[buttonStyle('plain'), frame({ width: 36, height: 34 }), ...(value ? [background('#DFF3F6', { shape: 'roundedRectangle' as const, cornerRadius: 9 })] : []), accessibilityLabel(value ? `${label}, включено` : label)]}><Image systemName={symbol} size={15} color={value ? '#0F8FA8' : textInk} modifiers={[font({ size: 15, weight: value ? 'semibold' : 'regular' })]} /></Button>;
+  const divider = <Divider modifiers={[frame({ height: 22 }), padding({ horizontal: 6 })]} />;
+  const panelWidth = Math.min(520, availableWidth);
+  return <Host style={{ height: 46, width: panelWidth }}><HStack spacing={0} modifiers={[padding({ horizontal: 10 }), frame({ width: panelWidth, height: 46 }), glassEffect({ shape: 'capsule' })]}>
+    <ColorPicker label="Цвет текста" modifiers={[labelsHidden(), frame({ width: 36 })]} selection={textFormat.color ?? '#151515'} supportsOpacity={false} onSelectionChange={color => update({ color })} />
+    {divider}
+    {popover('size', <Button onPress={() => setOpen('size')} modifiers={[buttonStyle('plain'), frame({ width: 58, height: 34 }), accessibilityLabel(`Размер шрифта ${size}`)]}><HStack spacing={4}><Text modifiers={[font({ size: 15 }), foregroundStyle(textInk)]}>{String(size)}</Text>{chevron}</HStack></Button>,
+      <VStack spacing={14} modifiers={[padding({ all: 18 }), frame({ width: 320 })]}>
+        <Text modifiers={[font({ size: 17, weight: 'semibold' })]}>Размер шрифта</Text>
+        <HStack spacing={12}><Text modifiers={[font({ size: 28, weight: 'medium' }), frame({ width: 52 })]}>{String(size)}</Text><Slider value={textFormat.fontSize ?? 24} min={8} max={96} step={1} onValueChange={fontSize => update({ fontSize })} /><Stepper label="Размер" value={size} min={8} max={96} onValueChange={fontSize => update({ fontSize })} modifiers={[labelsHidden()]} /></HStack>
+      </VStack>)}
+    {popover('font', <Button onPress={() => setOpen('font')} modifiers={[buttonStyle('plain'), frame({ width: 128, height: 34 }), accessibilityLabel(`Шрифт ${family}`)]}><HStack spacing={4}><Text modifiers={[font({ size: 15 }), foregroundStyle(textInk)]}>{family}</Text>{chevron}</HStack></Button>,
+      <VStack spacing={0} modifiers={[padding({ vertical: 8 }), frame({ width: 260 })]}>{textFamilies.map(([label, fontFamily]) => <Button key={fontFamily} onPress={() => { update({ fontFamily }); setOpen(undefined); }} modifiers={[buttonStyle('plain'), frame({ width: 260, height: 48 })]}>
+        <HStack spacing={0} modifiers={[padding({ horizontal: 18 })]}><Text modifiers={[font({ family: fontFamily === 'System' ? undefined : fontFamily, size: 17 }), foregroundStyle(textInk)]}>{label}</Text><Spacer />{textFormat.fontFamily === fontFamily && <Image systemName="checkmark" size={14} color="#0F8FA8" modifiers={[font({ size: 14, weight: 'semibold' })]} />}</HStack>
+      </Button>)}</VStack>)}
+    {divider}
+    {toggle('Жирный', 'bold', textFormat.bold, { bold: !textFormat.bold })}
+    {toggle('Курсив', 'italic', textFormat.italic, { italic: !textFormat.italic })}
+    {toggle('Подчёркнутый', 'underline', textFormat.underline, { underline: !textFormat.underline })}
+    {toggle('Зачёркнутый', 'strikethrough', textFormat.strikethrough, { strikethrough: !textFormat.strikethrough })}
+    {divider}
+    {popover('alignment', <Button onPress={() => setOpen('alignment')} modifiers={[buttonStyle('plain'), frame({ width: 50, height: 34 }), accessibilityLabel('Выравнивание')]}><HStack spacing={3}><Image systemName={alignmentSymbol} size={15} color={textInk} />{chevron}</HStack></Button>,
+      <HStack spacing={4} modifiers={[padding({ all: 8 })]}>{(['left', 'center', 'right'] as const).map((alignment, index) => {
+        const selected = (textFormat.alignment ?? 'left') === alignment;
+        return <Button key={alignment} onPress={() => update({ alignment })} modifiers={[buttonStyle('plain'), frame({ width: 44, height: 40 }), ...(selected ? [background('#DFF3F6', { shape: 'roundedRectangle' as const, cornerRadius: 9 })] : []), accessibilityLabel(['По левому краю', 'По центру', 'По правому краю'][index])]}><Image systemName={(['text.alignleft', 'text.aligncenter', 'text.alignright'] as const)[index]} size={16} color={selected ? '#0F8FA8' : textInk} /></Button>;
+      })}</HStack>)}
   </HStack></Host>;
 }

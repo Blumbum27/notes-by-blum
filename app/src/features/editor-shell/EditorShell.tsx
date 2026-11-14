@@ -1,20 +1,26 @@
-import { Button, Host, HStack, Menu, ProgressView, Text as NativeText } from '@expo/ui/swift-ui';
-import { buttonStyle, frame, glassEffect, labelStyle, padding } from '@expo/ui/swift-ui/modifiers';
+import { Button, Host, HStack, Image as Symbol, Menu, ProgressView, Text as NativeText } from '@expo/ui/swift-ui';
+import { accessibilityLabel, background, buttonStyle, font, foregroundStyle, frame, glassEffect, padding, shapes } from '@expo/ui/swift-ui/modifiers';
+import * as DocumentPicker from 'expo-document-picker';
 import { GlassView } from 'expo-glass-effect';
-import { File } from 'expo-file-system';
+import { Directory, File } from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type PropsWithChildren, type ReactNode } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { shareNotebookImages, shareNotebookPDF } from '../../../modules/notes-canvas/rendering';
+import { documentImport } from '../../../modules/document-import';
+import { printNotebook, shareNotebookImages, shareNotebookPDF } from '../../../modules/notes-canvas/rendering';
 import * as repository from '../../shared/documents/repository';
-import type { NotebookManifest, NotebookPage, Paper } from '../../shared/documents/types';
-import { AddPagePopover } from './AddPagePopover';
+import type { NotebookManifest, NotebookPage, OutlineEntry, PageBackground, Paper, PaperColor } from '../../shared/documents/types';
+import { saveSettings, useSettings } from '../../shared/settings';
+import { AddPagePopover, type AddPosition } from './AddPagePopover';
 import { DocumentTabs, getOpenTabs, publishTabs } from './DocumentTabs';
 import { ExportSheet } from './ExportSheet';
 import { FolderSheet } from './FolderSheet';
-import { MorePopover } from './MorePopover';
+import { MorePopover, type ElementKind } from './MorePopover';
 import { PagesSidebar, type PageActions } from './PagesSidebar';
+import { SearchPanel } from './SearchPanel';
+import { ToolbarButton } from './ToolbarButton';
 
 export type EditorShellProps = PropsWithChildren<{
   toolbar?: ReactNode;
@@ -29,6 +35,8 @@ export type EditorShellProps = PropsWithChildren<{
   onBeforeAction?: () => Promise<void>;
   onClearPage?: () => void;
   onClearPageAt?: (index: number) => void;
+  /** Removes chosen kinds of content from the active page. */
+  onEraseElements?: (kinds: ElementKind[]) => void;
 }>;
 
 export function EditorShell(props: EditorShellProps) {
@@ -36,7 +44,8 @@ export function EditorShell(props: EditorShellProps) {
   const insets = useSafeAreaInsets();
   const latest = useRef(props);
   useLayoutEffect(() => { latest.current = props; });
-  const [sidebar, setSidebar] = useState(false);
+  const [panel, setPanel] = useState<'pages' | 'search'>();
+  const settings = useSettings();
   const [exportIds, setExportIds] = useState<string[]>();
   const [moving, setMoving] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -69,16 +78,52 @@ export function EditorShell(props: EditorShellProps) {
     if (latest.current.notebook?.id === document.id) latest.current.onNotebookChange?.(next);
   }, []);
 
-  const add = useCallback((index: number, sourceIndex?: number, pattern?: Paper) => {
+  const add = useCallback((index: number, sourceIndex?: number, template: { pattern?: Paper; color?: PaperColor } = {}) => {
     void perform(async document => {
       const source = document.pages[sourceIndex ?? latest.current.activePage ?? 0];
-      const paper = { ...source.paper, ...(pattern ? { pattern } : {}) };
+      const paper = { ...source.paper, ...(template.pattern ? { pattern: template.pattern } : {}), ...(template.color ? { color: template.color } : {}) };
       const pages = [...document.pages];
       pages.splice(index, 0, repository.createPage(paper));
       await save(document, pages);
       latest.current.onSelectPage?.(index);
     });
   }, [perform, save]);
+
+  /** Inserts pages whose background is a copied image or PDF asset; the picker is shown before the save lock. */
+  const insertBackgrounds = useCallback(async (position: AddPosition, pick: () => Promise<{ uri: string; extension: string; pages: number } | undefined>) => {
+    const picked = await pick().catch(() => { Alert.alert('Не удалось открыть файл', 'Выберите другой файл и попробуйте ещё раз.'); return undefined; });
+    if (!picked) return;
+    void perform(async document => {
+      const active = latest.current.activePage ?? 0;
+      const asset = `assets/${repository.newId()}.${picked.extension}`;
+      new Directory(repository.packageDirectory(document.id), 'assets').create({ idempotent: true });
+      new File(picked.uri).copy(new File(repository.packageDirectory(document.id), asset));
+      const inserted = Array.from({ length: picked.pages }, (_, page) => {
+        const background: PageBackground = picked.extension === 'pdf' ? { kind: 'pdf', asset, page } : { kind: 'image', asset };
+        return { ...repository.createPage(document.pages[active].paper), background };
+      });
+      const index = position === 'last' ? document.pages.length : active + (position === 'after' ? 1 : 0);
+      const pages = [...document.pages];
+      pages.splice(index, 0, ...inserted);
+      await save(document, pages);
+      latest.current.onSelectPage?.(index);
+    });
+  }, [perform, save]);
+  const addImagePage = useCallback((position: AddPosition) => insertBackgrounds(position, async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 1 });
+    if (result.canceled) return;
+    const image = result.assets[0];
+    return { uri: image.uri, extension: image.uri.split('.').pop()?.toLowerCase() || 'jpg', pages: 1 };
+  }), [insertBackgrounds]);
+  const importPages = useCallback((position: AddPosition) => insertBackgrounds(position, async () => {
+    const result = await DocumentPicker.getDocumentAsync({ type: ['application/pdf', 'image/*'], copyToCacheDirectory: true });
+    if (result.canceled) return;
+    const file = result.assets[0];
+    const pdf = file.mimeType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const pages = pdf ? await documentImport.pdfPageCount(file.uri) : 1;
+    if (!pages) throw new Error('empty');
+    return { uri: file.uri, extension: pdf ? 'pdf' : file.name.split('.').pop()?.toLowerCase() || 'jpg', pages };
+  }), [insertBackgrounds]);
 
   const update = useCallback((index: number, patch: (page: NotebookPage) => Partial<NotebookPage>) => {
     void perform(async document => {
@@ -124,7 +169,12 @@ export function EditorShell(props: EditorShellProps) {
       }); } },
     ]),
     export: ids => { void perform(async () => { setExportIds(ids); }); },
+    outline: (entries: OutlineEntry[]) => { void perform(async document => {
+      const next = await repository.saveNotebook({ ...await repository.readNotebook(document.id), outline: entries });
+      if (latest.current.notebook?.id === document.id) latest.current.onNotebookChange?.(next);
+    }); },
   }), [add, clear, perform, save, update]);
+  const print = useCallback((ids: string[]) => { void perform(document => printNotebook(repository.packageDirectory(document.id).uri, document, ids)); }, [perform]);
 
   const home = useCallback(() => { void perform(async () => { router.dismissTo('/'); }); }, [perform]);
   const switchTab = useCallback((id: string) => {
@@ -144,7 +194,12 @@ export function EditorShell(props: EditorShellProps) {
   }), [perform]);
   const closeOthers = useCallback(() => { void perform(async document => { publishTabs([{ id: document.id, title: document.title }]); }); }, [perform]);
   const openMove = useCallback(() => { void perform(async () => { setMoving(true); }); }, [perform]);
-  const closeSidebar = useCallback(() => setSidebar(false), []);
+  const closePanel = useCallback(() => setPanel(undefined), []);
+  const togglePanel = (value: 'pages' | 'search') => {
+    if (panel === value) setPanel(undefined);
+    else { void perform(async () => { setPanel(value); }); }
+  };
+  const selectFound = useCallback((index: number) => { latest.current.onSelectPage?.(index); }, []);
 
   if (!notebook) return <View style={{ flex: 1 }}>{toolbar}{children}</View>;
   const page = notebook.pages[activePage];
@@ -152,25 +207,38 @@ export function EditorShell(props: EditorShellProps) {
   return <View style={[styles.root, { paddingTop: insets.top }]}>
     <DocumentTabs notebook={notebook} activePage={activePage} readOnly={readOnly} onHome={home} onSwitch={switchTab} onClose={closeTab} onRename={rename} onMove={openMove} onCloseOthers={closeOthers} />
     <GlassView glassEffectStyle="regular" style={styles.toolbar}>
-      <Host style={{ width: readOnly ? 202 : 92, height: 44 }}><HStack spacing={8} modifiers={[padding({ horizontal: 4 })]}>
-        <Button label="Боковая панель страниц" systemImage="sidebar.left" modifiers={[labelStyle('iconOnly'), buttonStyle(sidebar ? 'bordered' : 'plain'), frame({ width: 36, height: 36 })]} onPress={() => {
-          if (sidebar) setSidebar(false);
-          else { void perform(async () => { setSidebar(true); }); }
-        }} />
-        <Button label={readOnly ? 'Только чтение' : 'Режим редактирования'} systemImage={readOnly ? 'doc.text' : 'pencil.tip'} modifiers={[...(readOnly ? [] : [labelStyle('iconOnly')]), buttonStyle('bordered'), frame({ width: readOnly ? 146 : 36, height: 36 })]} onPress={() => { void perform(async () => { latest.current.onReadOnlyChange?.(!readOnly); }); }} />
+      <Host style={{ width: readOnly ? 248 : 144, height: 44 }}><HStack spacing={2} modifiers={[padding({ horizontal: 6 })]}>
+        <ToolbarButton label="Боковое меню" symbol="sidebar.left" selected={panel === 'pages'} onPress={() => togglePanel('pages')} />
+        <ToolbarButton label="Поиск" symbol="magnifyingglass" selected={panel === 'search'} onPress={() => togglePanel('search')} />
+        <Button onPress={() => { void perform(async () => { latest.current.onReadOnlyChange?.(!readOnly); }); }} modifiers={[buttonStyle('plain'), accessibilityLabel(readOnly ? 'Только чтение. Включить редактирование' : 'Режим редактирования. Включить только чтение')]}>
+          {readOnly
+            ? <HStack spacing={6} modifiers={[padding({ horizontal: 12 }), frame({ height: 32 }), background('#FFE7D6', shapes.capsule())]}>
+              <Symbol systemName="eye" size={14} color="#C25400" /><NativeText modifiers={[font({ size: 14, weight: 'medium' }), foregroundStyle('#C25400')]}>Только чтение</NativeText>
+            </HStack>
+            : <Symbol systemName="pencil.and.scribble" size={18} color="#2A2F2E" modifiers={[frame({ width: 40, height: 44 })]} />}
+        </Button>
       </HStack></Host>
       <View style={styles.center}>{!readOnly && toolbar}</View>
-      <Host style={{ width: readOnly ? 92 : 136, height: 44 }}><HStack spacing={8} modifiers={[padding({ horizontal: 4 })]}>
-        {!readOnly && <AddPagePopover currentPattern={page.paper.pattern} paperColor={page.paper.color} onAdd={(position, pattern) => add(position === 'last' ? notebook.pages.length : activePage + (position === 'after' ? 1 : 0), activePage, pattern)} />}
-        <Menu label="Поделиться" systemImage="square.and.arrow.up" modifiers={[labelStyle('iconOnly'), frame({ width: 36, height: 36 })]}>
-          <Button label="Экспортировать эту страницу" onPress={() => actions.export([page.id])} />
-          <Button label="Экспортировать все" onPress={() => actions.export([])} />
+      <Host style={{ width: readOnly ? 96 : 136, height: 44 }}><HStack spacing={2} modifiers={[padding({ horizontal: 6 })]}>
+        {!readOnly && <AddPagePopover currentPattern={page.paper.pattern} paperColor={page.paper.color} onAddImage={addImagePage} onImport={importPages}
+          onAdd={(position, template) => add(position === 'last' ? notebook.pages.length : activePage + (position === 'after' ? 1 : 0), activePage, template)} />}
+        <Menu label={<Symbol systemName="square.and.arrow.up" size={18} color="#2A2F2E" modifiers={[frame({ width: 40, height: 44 })]} />} modifiers={[buttonStyle('plain'), accessibilityLabel('Поделиться')]}>
+          <Button label="Экспортировать эту страницу" systemImage="doc" onPress={() => actions.export([page.id])} />
+          <Button label="Экспортировать все страницы" systemImage="doc.on.doc" onPress={() => actions.export([])} />
+          <Button label="Печать" systemImage="printer" onPress={() => print([])} />
         </Menu>
-        <MorePopover page={page} index={activePage} count={notebook.pages.length} thumbnail={`${packagePath}/thumbnails/${page.id}.png?v=${thumbnailRevision}`} onBookmark={() => actions.bookmark(activePage)} onRotate={degrees => actions.rotate(activePage, degrees)} onTemplate={pattern => update(activePage, current => { const paper = { ...current.paper, pattern }; return { paper, background: { kind: 'paper', paper } }; })} onGo={actions.select} onClear={props.onClearPage || props.onClearPageAt ? () => clear(activePage) : undefined} onRemove={() => actions.remove([page.id])} />
+        <MorePopover page={page} index={activePage} count={notebook.pages.length} thumbnail={`${packagePath}/thumbnails/${page.id}.png?v=${thumbnailRevision}`}
+          inOutline={!!notebook.outline?.some(entry => entry.pageId === page.id)} horizontal={settings.horizontal}
+          onBookmark={() => actions.bookmark(activePage)} onRotate={degrees => actions.rotate(activePage, degrees)}
+          onTemplate={template => update(activePage, current => { const paper = { ...current.paper, ...template }; return current.background.kind === 'paper' ? { paper, background: { kind: 'paper', paper } } : { paper }; })}
+          onGo={actions.select} onOutline={() => actions.outline([...(notebook.outline ?? []), { id: `${page.id}-${Date.now()}`, title: `Страница ${activePage + 1}`, pageId: page.id }])}
+          onHorizontal={horizontal => saveSettings({ ...settings, horizontal })}
+          onErase={readOnly ? undefined : props.onEraseElements} onClear={props.onClearPage || props.onClearPageAt ? () => clear(activePage) : undefined} onRemove={() => actions.remove([page.id])} />
       </HStack></Host>
     </GlassView>
     <View style={styles.content}>
-      {sidebar && <PagesSidebar key={notebook.id} notebook={notebook} activePage={activePage} revision={thumbnailRevision} packagePath={packagePath} onClose={closeSidebar} actions={actions} canClear={!!(props.onClearPage || props.onClearPageAt)} canClearInactive={!!props.onClearPageAt} />}
+      {panel === 'pages' && <PagesSidebar key={notebook.id} notebook={notebook} activePage={activePage} revision={thumbnailRevision} packagePath={packagePath} onClose={closePanel} actions={actions} canClear={!!(props.onClearPage || props.onClearPageAt)} canClearInactive={!!props.onClearPageAt} />}
+      {panel === 'search' && <SearchPanel key={notebook.id} notebook={notebook} packagePath={packagePath} activePage={activePage} onSelect={selectFound} onClose={closePanel} />}
       <View style={styles.document}>{children}</View>
     </View>
     {exportIds && <ExportSheet title={notebook.title} scope={!exportIds.length ? 'all' : exportIds.length === 1 ? 'page' : 'selected'} onCancel={() => setExportIds(undefined)} onExport={(title, format, background, annotations) => {
@@ -190,7 +258,7 @@ export function EditorShell(props: EditorShellProps) {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F4F6F5' },
-  toolbar: { height: 44, marginHorizontal: 4, borderRadius: 22, flexDirection: 'row', alignItems: 'center' },
+  toolbar: { height: 44, marginHorizontal: 8, marginTop: 2, borderRadius: 22, flexDirection: 'row', alignItems: 'center' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', minWidth: 0 },
   content: { flex: 1, flexDirection: 'row' },
   document: { flex: 1, minWidth: 0 },

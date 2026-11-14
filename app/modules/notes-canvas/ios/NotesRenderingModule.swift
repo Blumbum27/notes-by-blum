@@ -38,6 +38,19 @@ public final class NotesRenderingModule: Module {
       sheet.popoverPresentationController?.sourceRect = CGRect(x: controller.view.bounds.maxX - 64, y: 80, width: 1, height: 1)
       controller.present(sheet, animated: true)
     }.runOnQueue(.main)
+    AsyncFunction("printPages") { (path: String, json: String, ids: [String]) in
+      let renderer = try NotebookRenderer(path: path, json: json)
+      let url = try renderer.pdf(ids: ids, background: true, annotations: true)
+      let controller = UIPrintInteractionController.shared
+      let info = UIPrintInfo.printInfo()
+      info.jobName = url.deletingPathExtension().lastPathComponent
+      controller.printInfo = info
+      controller.printingItem = url
+      controller.present(animated: true) { _, _, _ in try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+    }.runOnQueue(.main)
+    AsyncFunction("search") { (path: String, json: String, query: String) -> [[String: Any]] in
+      try NotebookRenderer(path: path, json: json).search(query)
+    }
   }
 }
 
@@ -54,12 +67,39 @@ private final class NotebookRenderer {
   }
   func size(_ page: [String: Any]) -> CGSize {
     let paper = page["paper"] as? [String: Any] ?? [:]
-    let portrait = paper["size"] as? String == "Letter" ? CGSize(width: 612, height: 792) : CGSize(width: 595, height: 842)
+    let portrait: CGSize
+    switch paper["size"] as? String {
+    case "Letter": portrait = CGSize(width: 612, height: 792)
+    case "A5": portrait = CGSize(width: 420, height: 595)
+    default: portrait = CGSize(width: 595, height: 842)
+    }
     return paper["orientation"] as? String == "landscape" ? CGSize(width: portrait.height, height: portrait.width) : portrait
   }
-  func color(_ value: String) -> UIColor {
-    let number = UInt64(value.replacingOccurrences(of: "#", with: ""), radix: 16) ?? 0
-    return UIColor(red: CGFloat(number >> 16 & 255) / 255, green: CGFloat(number >> 8 & 255) / 255, blue: CGFloat(number & 255) / 255, alpha: 1)
+  func color(_ value: String) -> UIColor { UIColor.note(value) }
+  /// Ищет текст в текстовых блоках, клейких заметках и страницах PDF-фона.
+  func search(_ query: String) -> [[String: Any]] {
+    let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !needle.isEmpty else { return [] }
+    var documents: [String: PDFDocument] = [:]
+    var results: [[String: Any]] = []
+    func snippet(_ text: String) -> String? {
+      guard let range = text.range(of: needle, options: [.caseInsensitive, .diacriticInsensitive]) else { return nil }
+      let start = text.index(range.lowerBound, offsetBy: -40, limitedBy: text.startIndex) ?? text.startIndex
+      let end = text.index(range.upperBound, offsetBy: 60, limitedBy: text.endIndex) ?? text.endIndex
+      return (start > text.startIndex ? "…" : "") + text[start..<end].replacingOccurrences(of: "\n", with: " ") + (end < text.endIndex ? "…" : "")
+    }
+    for (index, page) in pages.enumerated() {
+      for object in page["objects"] as? [[String: Any]] ?? [] {
+        if let text = object["text"] as? String, let found = snippet(text) { results.append(["page": index, "snippet": found, "source": object["kind"] as? String ?? "text"]) }
+      }
+      let background = page["background"] as? [String: Any] ?? [:]
+      if background["kind"] as? String == "pdf", let asset = background["asset"] as? String {
+        let document = documents[asset] ?? PDFDocument(url: directory.appendingPathComponent(asset))
+        documents[asset] = document
+        if let text = document?.page(at: background["page"] as? Int ?? 0)?.string, let found = snippet(text) { results.append(["page": index, "snippet": found, "source": "pdf"]) }
+      }
+    }
+    return results
   }
   func outputSize(_ page: [String: Any]) -> CGSize {
     let original = size(page)
@@ -98,7 +138,7 @@ private final class NotebookRenderer {
         let paper = source["paper"] as? [String: Any] ?? page["paper"] as? [String: Any] ?? [:]
         let view = PaperView(frame: bounds)
         view.pattern = paper["pattern"] as? String ?? "blank"
-        view.backgroundColor = paper["color"] as? String == "yellow" ? color("#FFF6D5") : .white
+        view.backgroundColor = color(["yellow": "#FFF6D5", "dark": "#2E3133"][paper["color"] as? String ?? ""] ?? "#FFFFFF")
         view.backgroundColor?.setFill(); context.fill(bounds)
         view.draw(bounds)
       }
@@ -119,6 +159,15 @@ private final class NotebookRenderer {
       context.translateBy(x: -frame.midX, y: -frame.midY)
       if object["kind"] as? String == "image", let asset = object["asset"] as? String {
         UIImage(contentsOfFile: directory.appendingPathComponent(asset).path)?.draw(in: frame)
+      } else if object["kind"] as? String == "tape" {
+        color(object["color"] as? String ?? "#2B2B2B").setFill()
+        UIBezierPath(roundedRect: frame, cornerRadius: 2).fill()
+      } else if object["kind"] as? String == "sticky" {
+        context.setShadow(offset: CGSize(width: 0, height: 3), blur: 8, color: UIColor.black.withAlphaComponent(0.16).cgColor)
+        color(object["color"] as? String ?? "#FFE98F").setFill()
+        UIBezierPath(roundedRect: frame, cornerRadius: 6).fill()
+        context.setShadow(offset: .zero, blur: 0)
+        ((object["text"] as? String ?? "") as NSString).draw(in: frame.insetBy(dx: 19, dy: 18), withAttributes: [.font: UIFont.systemFont(ofSize: 20), .foregroundColor: UIColor(white: 0.12, alpha: 1)])
       } else if let text = object["text"] as? String {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = object["alignment"] as? String == "center" ? .center : object["alignment"] as? String == "right" ? .right : .left
