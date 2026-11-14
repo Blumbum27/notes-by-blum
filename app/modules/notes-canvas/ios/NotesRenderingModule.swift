@@ -89,7 +89,11 @@ private final class NotebookRenderer {
           pdfPage.draw(with: .mediaBox, to: context); context.restoreGState()
         }
       case "image":
-        if let asset = source["asset"] as? String { UIImage(contentsOfFile: directory.appendingPathComponent(asset).path)?.draw(in: bounds) }
+        if let asset = source["asset"] as? String, let image = UIImage(contentsOfFile: directory.appendingPathComponent(asset).path) {
+          let scale = min(bounds.width / image.size.width, bounds.height / image.size.height)
+          let fitted = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+          image.draw(in: CGRect(x: bounds.midX - fitted.width / 2, y: bounds.midY - fitted.height / 2, width: fitted.width, height: fitted.height))
+        }
       default:
         let paper = source["paper"] as? [String: Any] ?? page["paper"] as? [String: Any] ?? [:]
         let view = PaperView(frame: bounds)
@@ -124,7 +128,7 @@ private final class NotebookRenderer {
         if object["bold"] as? Bool == true { traits.insert(.traitBold) }
         if object["italic"] as? Bool == true { traits.insert(.traitItalic) }
         if let descriptor = font.fontDescriptor.withSymbolicTraits(traits) { font = UIFont(descriptor: descriptor, size: pointSize) }
-        (text as NSString).draw(in: frame, withAttributes: [.font: font, .foregroundColor: color(object["color"] as? String ?? "#151515"), .paragraphStyle: paragraph])
+        (text as NSString).draw(in: frame, withAttributes: [.font: font, .foregroundColor: color(object["color"] as? String ?? "#151515"), .paragraphStyle: paragraph, .underlineStyle: object["underline"] as? Bool == true ? NSUnderlineStyle.single.rawValue : 0, .strikethroughStyle: object["strikethrough"] as? Bool == true ? NSUnderlineStyle.single.rawValue : 0])
       }
       context.restoreGState()
     }

@@ -1,5 +1,5 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { Alert, View, useWindowDimensions } from 'react-native';
 import { Button, ColorPicker, Host, HStack, Menu } from '@expo/ui/swift-ui';
 import { glassEffect, labelsHidden, padding } from '@expo/ui/swift-ui/modifiers';
@@ -10,16 +10,22 @@ import { renderThumbnails } from '../../../modules/notes-canvas/rendering';
 import * as repository from '../../shared/documents/repository';
 import type { NotebookManifest, PageObject } from '../../shared/documents/types';
 import { saveSettings, useSettings } from '../../shared/settings';
-import { EditorShell } from '../editor-shell/EditorShell';
 import { EditorHistory, EditorToolPanel, EditorTools, type EditorToolState } from './EditorTools';
 import { EditorPageRibbon } from './EditorPageRibbon';
 
-export default function NotebookScreen() {
+export type EditorFrameProps = {
+  notebook: NotebookManifest; onNotebookChange: (value: NotebookManifest) => void;
+  onBeforeAction: () => Promise<void>; activePage: number; readOnly: boolean;
+  onReadOnlyChange: (value: boolean) => void; onSelectPage: (index: number) => void;
+  onClearPage: () => void; toolbar: React.ReactNode; children: React.ReactNode;
+};
+
+export default function NotebookScreen({ frame }: { frame: ComponentType<EditorFrameProps> }) {
   const { id } = useLocalSearchParams<{ id: string }>();
-  return <NotebookEditor key={id} id={id} />;
+  return <NotebookEditor key={id} id={id} frame={frame} />;
 }
 
-function NotebookEditor({ id }: { id: string }) {
+function NotebookEditor({ id, frame: EditorShell }: { id: string; frame: ComponentType<EditorFrameProps> }) {
   const [notebook, setNotebook] = useState<NotebookManifest>();
   const [tools, setTools] = useState<EditorToolState>({ tool: 'pen', color: '#151515', width: 3, eraserMode: 'bitmap' });
   const [active, setActive] = useState(0);
