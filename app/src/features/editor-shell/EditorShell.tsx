@@ -1,120 +1,198 @@
-import { Button, Host, HStack, Menu, Spacer, Text as NativeText } from '@expo/ui/swift-ui';
-import { buttonStyle, disabled, labelStyle, padding } from '@expo/ui/swift-ui/modifiers';
+import { Button, Host, HStack, Menu, ProgressView, Text as NativeText } from '@expo/ui/swift-ui';
+import { buttonStyle, frame, glassEffect, labelStyle, padding } from '@expo/ui/swift-ui/modifiers';
+import { GlassView } from 'expo-glass-effect';
+import { File } from 'expo-file-system';
 import { router } from 'expo-router';
-import { useEffect, useState, useSyncExternalStore, type PropsWithChildren, type ReactNode } from 'react';
-import { Alert, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { File, Paths } from 'expo-file-system';
-import { renderThumbnails, shareNotebookPDF, shareNotebookImages } from '../../../modules/notes-canvas/rendering';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type PropsWithChildren, type ReactNode } from 'react';
+import { Alert, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { shareNotebookImages, shareNotebookPDF } from '../../../modules/notes-canvas/rendering';
 import * as repository from '../../shared/documents/repository';
 import type { NotebookManifest, NotebookPage, Paper } from '../../shared/documents/types';
-import { readSettings, saveSettings, useSettings } from '../../shared/settings';
 import { AddPagePopover } from './AddPagePopover';
+import { DocumentTabs, getOpenTabs, publishTabs } from './DocumentTabs';
 import { ExportSheet } from './ExportSheet';
+import { FolderSheet } from './FolderSheet';
+import { MorePopover } from './MorePopover';
+import { PagesSidebar, type PageActions } from './PagesSidebar';
 
 export type EditorShellProps = PropsWithChildren<{
   toolbar?: ReactNode;
   notebook?: NotebookManifest;
   activePage?: number;
+  thumbnailRevision: number;
   readOnly?: boolean;
   onReadOnlyChange?: (value: boolean) => void;
   onNotebookChange?: (manifest: NotebookManifest) => void;
   onSelectPage?: (index: number) => void;
-  /** Дождаться сохранения всех живых канвасов перед экспортом/сменой вкладки. */
+  /** Saves live canvases, pending objects and changed thumbnails in the editor. */
   onBeforeAction?: () => Promise<void>;
   onClearPage?: () => void;
+  onClearPageAt?: (index: number) => void;
 }>;
-const tabsFile = new File(Paths.document, 'open-documents.json');
-let openDocuments: { id: string; title: string }[] = tabsFile.exists ? JSON.parse(tabsFile.textSync()) : [];
-const tabListeners = new Set<() => void>();
-const publishTabs = (value: typeof openDocuments) => { const temporary = new File(Paths.document, 'open-documents.json.tmp'); temporary.write(JSON.stringify(value)); temporary.move(tabsFile, { overwrite: true }); openDocuments = value; tabListeners.forEach(listener => listener()); };
 
-export function EditorShell({ children, toolbar, notebook, activePage = 0, readOnly = false, onReadOnlyChange, onNotebookChange, onSelectPage, onBeforeAction, onClearPage }: EditorShellProps) {
+export function EditorShell(props: EditorShellProps) {
+  const { children, toolbar, notebook, activePage = 0, readOnly = false, thumbnailRevision } = props;
+  const insets = useSafeAreaInsets();
+  const latest = useRef(props);
+  useLayoutEffect(() => { latest.current = props; });
   const [sidebar, setSidebar] = useState(false);
-  const [bookmarks, setBookmarks] = useState(false);
-  const [singleColumn, setSingleColumn] = useState(false);
-  const [revision, setRevision] = useState(0);
   const [exportIds, setExportIds] = useState<string[]>();
-  const [selection, setSelection] = useState<string[] | null>(null);
-  const [sidebarRight, setSidebarRight] = useState(false);
-  const settings = useSettings();
-  const tabs = useSyncExternalStore(listener => { tabListeners.add(listener); return () => { tabListeners.delete(listener); }; }, () => openDocuments);
+  const [moving, setMoving] = useState(false);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!notebook) return;
-    if (openDocuments.some(tab => tab.id === notebook.id && tab.title === notebook.title)) return;
-    publishTabs([...(readSettings().newTabs ? openDocuments.filter(tab => tab.id !== notebook.id) : []), { id: notebook.id, title: notebook.title }]);
-  }, [notebook]);
-  useEffect(() => {
-    if (!notebook) return;
-    let current = true;
-    renderThumbnails(repository.packageDirectory(notebook.id).uri, notebook).then(() => { if (current) setRevision(value => value + 1); }).catch(() => {});
-    return () => { current = false; };
-  }, [notebook]);
+  const locked = useRef(false);
+
+  const perform = useCallback(async (action: (document: NotebookManifest) => Promise<void>) => {
+    const id = latest.current.notebook?.id;
+    if (!id || locked.current) return;
+    locked.current = true;
+    setBusy(true);
+    try {
+      await latest.current.onBeforeAction?.();
+      const document = await repository.readNotebook(id);
+      if (latest.current.notebook?.id !== id) return;
+      await action(document);
+    } catch {
+      Alert.alert('Не удалось выполнить действие', 'Попробуйте ещё раз. Если ошибка повторится, оставьте блокнот открытым.');
+    } finally {
+      locked.current = false;
+      setBusy(false);
+    }
+  }, []);
+
+  const save = useCallback(async (document: NotebookManifest, pages: NotebookPage[]) => {
+    const current = await repository.readNotebook(document.id);
+    const next = await repository.saveNotebook({
+      ...current,
+      pages: pages.map(page => ({ ...page, objects: current.pages.find(value => value.id === page.id)?.objects ?? page.objects })),
+    });
+    if (latest.current.notebook?.id === document.id) latest.current.onNotebookChange?.(next);
+  }, []);
+
+  const add = useCallback((index: number, sourceIndex?: number, pattern?: Paper) => {
+    void perform(async document => {
+      const source = document.pages[sourceIndex ?? latest.current.activePage ?? 0];
+      const paper = { ...source.paper, ...(pattern ? { pattern } : {}) };
+      const pages = [...document.pages];
+      pages.splice(index, 0, repository.createPage(paper));
+      await save(document, pages);
+      latest.current.onSelectPage?.(index);
+    });
+  }, [perform, save]);
+
+  const update = useCallback((index: number, patch: (page: NotebookPage) => Partial<NotebookPage>) => {
+    void perform(async document => {
+      await save(document, document.pages.map((page, i) => i === index ? { ...page, ...patch(page) } : page));
+    });
+  }, [perform, save]);
+
+  const clear = useCallback((index: number) => {
+    Alert.alert('Очистить страницу?', 'Все рукописные штрихи на странице будут удалены.', [
+      { text: 'Отменить', style: 'cancel' },
+      { text: 'Очистить', style: 'destructive', onPress: () => { void perform(async () => {
+        if (latest.current.onClearPageAt) latest.current.onClearPageAt(index);
+        else if (index === (latest.current.activePage ?? 0)) latest.current.onClearPage?.();
+      }); } },
+    ]);
+  }, [perform]);
+
+  const actions = useMemo<PageActions>(() => ({
+    select: index => { void perform(async () => { latest.current.onSelectPage?.(index); }); },
+    add,
+    bookmark: index => update(index, page => ({ favorite: !page.favorite })),
+    rotate: (index, degrees) => update(index, page => ({ rotation: (page.rotation + degrees) % 360 })),
+    duplicate: index => { void perform(async document => {
+      const original = document.pages[index];
+      const copy = { ...original, id: repository.newId(), objects: original.objects.map(object => ({ ...object, id: repository.newId() })) };
+      const source = new File(repository.drawingPath(document.id, original.id));
+      if (source.exists) source.copy(new File(repository.drawingPath(document.id, copy.id)));
+      const pages = [...document.pages];
+      pages.splice(index + 1, 0, copy);
+      await save(document, pages);
+      latest.current.onSelectPage?.(index + 1);
+    }); },
+    clear,
+    remove: ids => Alert.alert(ids.length > 1 ? 'Удалить выбранные страницы?' : 'Удалить страницу?', 'Это действие нельзя отменить.', [
+      { text: 'Отменить', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: () => { void perform(async document => {
+        const pages = document.pages.filter(page => !ids.includes(page.id));
+        if (!pages.length) return;
+        const currentId = document.pages[latest.current.activePage ?? 0]?.id;
+        await save(document, pages);
+        const preserved = pages.findIndex(page => page.id === currentId);
+        latest.current.onSelectPage?.(preserved >= 0 ? preserved : Math.min(latest.current.activePage ?? 0, pages.length - 1));
+      }); } },
+    ]),
+    export: ids => { void perform(async () => { setExportIds(ids); }); },
+  }), [add, clear, perform, save, update]);
+
+  const home = useCallback(() => { void perform(async () => { router.dismissTo('/'); }); }, [perform]);
+  const switchTab = useCallback((id: string) => {
+    if (id === latest.current.notebook?.id) return;
+    void perform(async () => { router.setParams({ id }); });
+  }, [perform]);
+  const closeTab = useCallback((id: string) => { void perform(async document => {
+    const remaining = getOpenTabs().filter(tab => tab.id !== id);
+    publishTabs(remaining);
+    if (id !== document.id) return;
+    if (remaining.length) router.setParams({ id: remaining[remaining.length - 1].id });
+    else router.dismissTo('/');
+  }); }, [perform]);
+  const rename = useCallback((title: string) => perform(async document => {
+    const next = await repository.updateItem(document.id, { title });
+    if (latest.current.notebook?.id === document.id) latest.current.onNotebookChange?.(next);
+  }), [perform]);
+  const closeOthers = useCallback(() => { void perform(async document => { publishTabs([{ id: document.id, title: document.title }]); }); }, [perform]);
+  const openMove = useCallback(() => { void perform(async () => { setMoving(true); }); }, [perform]);
+  const closeSidebar = useCallback(() => setSidebar(false), []);
+
   if (!notebook) return <View style={{ flex: 1 }}>{toolbar}{children}</View>;
   const page = notebook.pages[activePage];
-  const perform = async (action: () => Promise<void>) => {
-    if (busy) return;
-    setBusy(true);
-    try { await onBeforeAction?.(); await action(); }
-    catch { Alert.alert('Не удалось выполнить действие', 'Изменения не применены. Попробуйте ещё раз.'); }
-    finally { setBusy(false); }
-  };
-  const save = async (pages: NotebookPage[]) => {
-    const latest = await repository.readNotebook(notebook.id);
-    onNotebookChange?.(await repository.saveNotebook({ ...latest, pages: pages.map(page => ({ ...page, objects: latest.pages.find(value => value.id === page.id)?.objects ?? page.objects })) }));
-  };
-  const update = (index: number, patch: Partial<NotebookPage>) => perform(() => save(notebook.pages.map((value, i) => i === index ? { ...value, ...patch } : value)));
-  const add = (index: number, pattern?: Paper) => perform(async () => {
-    const paper = { ...page.paper, ...(pattern ? { pattern } : {}) };
-    const pages = [...notebook.pages]; pages.splice(index, 0, repository.createPage(paper));
-    await save(pages); onSelectPage?.(index);
-  });
-  const duplicate = (index: number) => perform(async () => {
-    const original = (await repository.readNotebook(notebook.id)).pages[index];
-    const copy = { ...original, id: repository.newId(), objects: original.objects.map(object => ({ ...object, id: repository.newId() })) };
-    const source = new File(repository.drawingPath(notebook.id, original.id));
-    if (source.exists) source.copy(new File(repository.drawingPath(notebook.id, copy.id)));
-    const pages = [...notebook.pages]; pages.splice(index + 1, 0, copy); await save(pages); onSelectPage?.(index + 1);
-  });
-  const remove = (index: number) => Alert.alert('Удалить страницу?', 'Страница будет удалена из блокнота.', [{ text: 'Отменить', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: () => { void perform(async () => { await save(notebook.pages.filter((_, i) => i !== index)); onSelectPage?.(Math.min(activePage, notebook.pages.length - 2)); }); } }]);
-  const exportPDF = (ids: string[]) => { setExportIds(ids); };
-  const close = (id: string) => perform(async () => {
-    publishTabs(openDocuments.filter(tab => tab.id !== id));
-    if (id !== notebook.id) return;
-    if (openDocuments.length) router.setParams({ id: openDocuments[openDocuments.length - 1].id });
-    else router.dismissTo('/');
-  });
-  const pageMenu = (index: number) => <Menu label="Меню страницы" systemImage="chevron.down" modifiers={[labelStyle('iconOnly')]}>
-    <Button label="Добавить страницу перед" onPress={() => { void add(index); }} />
-    <Button label="Добавить страницу после" onPress={() => { void add(index + 1); }} />
-    <Button label="Дублировать" systemImage="doc.on.doc" onPress={() => { void duplicate(index); }} />
-    <Menu label="Повернуть страницу"><Button label="На 90° по часовой стрелке" onPress={() => { void update(index, { rotation: (notebook.pages[index].rotation + 90) % 360 }); }} /><Button label="На 90° против часовой стрелки" onPress={() => { void update(index, { rotation: (notebook.pages[index].rotation + 270) % 360 }); }} /><Button label="На 180°" onPress={() => { void update(index, { rotation: (notebook.pages[index].rotation + 180) % 360 }); }} /></Menu>
-    <Button label="Экспорт PDF" systemImage="square.and.arrow.up" onPress={() => { void exportPDF([notebook.pages[index].id]); }} />
-    <Button label="Удалить страницу" role="destructive" modifiers={[disabled(notebook.pages.length < 2)]} onPress={() => remove(index)} />
-  </Menu>;
-  return <View style={styles.root}>
-    {selection && <Host style={{ height: 50 }}><HStack><Button label="Отменить выбор" onPress={() => setSelection(null)} /><NativeText>{`Выбрано: ${selection.length}`}</NativeText><Button label="Экспортировать выбранные" modifiers={[disabled(!selection.length)]} onPress={() => { setExportIds(selection); }} /><Button label="Удалить выбранные" role="destructive" modifiers={[disabled(!selection.length || selection.length === notebook.pages.length)]} onPress={() => Alert.alert('Удалить выбранные страницы?', undefined, [{ text: 'Отменить', style: 'cancel' }, { text: 'Удалить', style: 'destructive', onPress: () => { void perform(async () => { await save(notebook.pages.filter(item => !selection.includes(item.id))); setSelection(null); onSelectPage?.(0); }); } }])} /></HStack></Host>}
-    {exportIds && <ExportSheet title={notebook.title} onCancel={() => setExportIds(undefined)} onExport={(title, format, background, annotations) => { const ids = exportIds; setExportIds(undefined); void perform(() => (format === 'pdf' ? shareNotebookPDF : shareNotebookImages)(repository.packageDirectory(notebook.id).uri, { ...notebook, title }, ids, background, annotations)); }} />}
-    <View style={styles.tabs}><Host style={{ width: 58, height: 48 }}><Button label="Домой" systemImage="house" modifiers={[labelStyle('iconOnly')]} onPress={() => { void perform(async () => { router.dismissTo('/'); }); }} /></Host><ScrollView horizontal showsHorizontalScrollIndicator={false}>{tabs.map(tab => <View key={tab.id} style={[styles.tab, tab.id === notebook.id && styles.activeTab]}><Host style={{ flex: 1, height: 48 }}><HStack><Menu label={tab.title} systemImage="chevron.down">
-      {tab.id === notebook.id && <><Button label="Переименовать" onPress={() => Alert.prompt('Название блокнота', undefined, title => { if (title.trim()) void perform(async () => { onNotebookChange?.(await repository.updateItem(notebook.id, { title: title.trim() })); }); }, 'plain-text', notebook.title)} />
-      <NativeText>{`Стр. ${activePage + 1} из ${notebook.pages.length}`}</NativeText>
-      <Button label="Расположение" onPress={() => { void perform(async () => { const items = await repository.listItems(); Alert.alert('Расположение', notebook.parentId ? items.find(item => item.id === notebook.parentId)?.title ?? 'Папка' : 'Документы'); }); }} />
-      <Button label="Переместить в другую папку" onPress={() => { void perform(async () => { const folders = (await repository.listItems()).filter(item => item.kind === 'folder' && !item.deletedAt); Alert.alert('Переместить в другую папку', undefined, [{ text: 'Отменить', style: 'cancel' }, { text: 'Документы', onPress: () => { void perform(async () => { await repository.moveItem(notebook.id, null); onNotebookChange?.(await repository.readNotebook(notebook.id)); }); } }, ...folders.map(folder => ({ text: folder.title, onPress: () => { void perform(async () => { await repository.moveItem(notebook.id, folder.id); onNotebookChange?.(await repository.readNotebook(notebook.id)); }); } }))]); }); }} />
-      <NativeText>{`Изменён: ${new Date(notebook.modifiedAt).toLocaleString('ru')}`}</NativeText></>}
-      <Button label="Закрыть другие вкладки" role="destructive" onPress={() => { publishTabs([tab]); if (tab.id !== notebook.id) void perform(async () => { router.setParams({ id: tab.id }); }); }} />
-    </Menu><Button label="Открыть вкладку" modifiers={[labelStyle('iconOnly')]} systemImage="arrow.up.right" onPress={() => { if (tab.id !== notebook.id) void perform(async () => { router.setParams({ id: tab.id }); }); }} /><Button label="Закрыть вкладку" systemImage="xmark" modifiers={[labelStyle('iconOnly')]} onPress={() => { void close(tab.id); }} /></HStack></Host></View>)}</ScrollView></View>
-    <View style={styles.toolbar}><Host style={{ width: 178, height: 58 }}><HStack spacing={12} modifiers={[padding({ all: 8 })]}><Button label="Боковая панель страниц" systemImage="sidebar.left" modifiers={[labelStyle('iconOnly'), buttonStyle(sidebar ? 'bordered' : 'plain')]} onPress={() => setSidebar(!sidebar)} /><Button label={readOnly ? 'Только чтение' : 'Режим редактирования'} systemImage={readOnly ? 'eye' : 'pencil.tip'} modifiers={[labelStyle('iconOnly')]} onPress={() => onReadOnlyChange?.(!readOnly)} /></HStack></Host><View style={{ flex: 1 }}>{!readOnly && toolbar}</View><Host style={{ width: 186, height: 58 }}><HStack spacing={18} modifiers={[padding({ all: 8 })]}>
-      <AddPagePopover currentPattern={page.paper.pattern} onAdd={(position, pattern) => { void add(position === 'last' ? notebook.pages.length : activePage + (position === 'after' ? 1 : 0), pattern); }} />
-
-      <Button label="Поделиться" systemImage="square.and.arrow.up" modifiers={[labelStyle('iconOnly'), disabled(busy)]} onPress={() => setExportIds([])} />
-      <Menu label="Ещё" systemImage="ellipsis.circle" modifiers={[labelStyle('iconOnly')]}><Button label="Настройки" onPress={() => { void perform(async () => { router.push('/settings'); }); }} /><Menu label="Направление прокрутки"><Button label="Вертикально" onPress={() => { void perform(async () => saveSettings({ ...settings, horizontal: false })); }} /><Button label="Горизонтально" onPress={() => { void perform(async () => saveSettings({ ...settings, horizontal: true })); }} /></Menu><Button label="Переместить в корзину" role="destructive" onPress={() => Alert.alert('Переместить блокнот в корзину?', undefined, [{ text: 'Отменить', style: 'cancel' }, { text: 'В корзину', style: 'destructive', onPress: () => { void perform(async () => { await repository.updateItem(notebook.id, { deletedAt: new Date().toISOString() }); router.dismissTo('/'); }); } }])} /><Button label={sidebarRight ? 'Панель слева' : 'Панель справа'} onPress={() => setSidebarRight(!sidebarRight)} /><Button label={page.favorite ? 'Удалить закладку' : 'Добавить закладку'} systemImage="bookmark" onPress={() => { void update(activePage, { favorite: !page.favorite }); }} />{pageMenu(activePage)}<Menu label="Изменить шаблон">{(['blank', 'ruled', 'grid', 'dots'] as const).map(pattern => <Button key={pattern} label={{ blank: 'Пустая страница', ruled: 'Линованная', grid: 'В клетку', dots: 'В точку' }[pattern]} onPress={() => { const paper = { ...page.paper, pattern }; void update(activePage, { paper, background: { kind: 'paper', paper } }); }} />)}</Menu><Button label="Перейти к странице" onPress={() => Alert.prompt(`Перейти к странице (1–${notebook.pages.length})`, undefined, value => { const index = Number(value) - 1; if (Number.isInteger(index) && index >= 0 && index < notebook.pages.length) void perform(async () => { onSelectPage?.(index); }); else Alert.alert('Такой страницы нет'); }, 'plain-text', String(activePage + 1), 'number-pad')} />{onClearPage && <Button label="Очистить страницу" role="destructive" onPress={() => Alert.alert('Очистить страницу?', 'Рукописные заметки будут удалены.', [{ text: 'Отменить', style: 'cancel' }, { text: 'Очистить', style: 'destructive', onPress: onClearPage }])} />}</Menu>
-    </HStack></Host></View>
-    <View style={[styles.content, sidebarRight && { flexDirection: 'row-reverse' }]}>{sidebar && <View style={styles.sidebar}><Host style={{ height: 64 }}><HStack modifiers={[padding({ all: 12 })]}><Menu label="Параметры страниц" systemImage="ellipsis" modifiers={[labelStyle('iconOnly')]}><Button label="Выбрать страницы" onPress={() => setSelection([])} /><Button label={sidebarRight ? 'Панель слева' : 'Панель справа'} onPress={() => setSidebarRight(!sidebarRight)} /><Button label={singleColumn ? 'Две колонки' : 'Одна колонка'} onPress={() => setSingleColumn(!singleColumn)} /></Menu><Spacer /><NativeText>Страницы</NativeText><Spacer /><Button label="Закрыть панель страниц" systemImage="xmark" modifiers={[labelStyle('iconOnly')]} onPress={() => setSidebar(false)} /></HStack></Host><Host style={{ height: 48 }}><Menu label={bookmarks ? 'Только закладки' : 'Все страницы'}><Button label="Все страницы" onPress={() => setBookmarks(false)} /><Button label="Только закладки" onPress={() => setBookmarks(true)} /></Menu></Host><ScrollView contentContainerStyle={styles.grid}>{notebook.pages.map((item, index) => {
-      if (bookmarks && !item.favorite) return null;
-      const uri = new File(repository.packageDirectory(notebook.id), 'thumbnails', `${item.id}.png`).uri;
-      return <View key={item.id} style={{ width: singleColumn ? '100%' : '46%' }}><View style={[styles.preview, index === activePage && styles.selected]}><Image source={{ uri: `${uri}?v=${revision}` }} style={StyleSheet.absoluteFill} resizeMode="contain" /><Pressable accessibilityRole="button" accessibilityLabel={`Открыть страницу ${index + 1}`} style={StyleSheet.absoluteFill} onPress={() => { if (selection) setSelection(selection.includes(item.id) ? selection.filter(id => id !== item.id) : [...selection, item.id]); else void perform(async () => { onSelectPage?.(index); }); }} />{selection?.includes(item.id) && <Text style={{ position: 'absolute', top: 8, right: 8, color: '#0087FF' }}>✓</Text>}</View><Host style={{ height: 42 }}><HStack><NativeText>{String(index + 1)}</NativeText><Spacer /><Button label={item.favorite ? 'Удалить закладку' : 'Добавить закладку'} systemImage={item.favorite ? 'bookmark.fill' : 'bookmark'} modifiers={[labelStyle('iconOnly')]} onPress={() => { void update(index, { favorite: !item.favorite }); }} />{pageMenu(index)}</HStack></Host></View>;
-    })}<Host style={{ width: singleColumn ? '100%' : '46%', height: 140 }}><Button label="Добавить страницу" systemImage="plus" modifiers={[labelStyle('iconOnly'), buttonStyle('bordered')]} onPress={() => { void add(notebook.pages.length); }} /></Host></ScrollView></View>}<View style={{ flex: 1 }}>{children}</View></View>
-    {busy && <Text accessibilityLiveRegion="polite" style={styles.status}>Подготовка…</Text>}
+  const packagePath = repository.packageDirectory(notebook.id).uri.replace(/\/$/, '');
+  return <View style={[styles.root, { paddingTop: insets.top }]}>
+    <DocumentTabs notebook={notebook} activePage={activePage} readOnly={readOnly} onHome={home} onSwitch={switchTab} onClose={closeTab} onRename={rename} onMove={openMove} onCloseOthers={closeOthers} />
+    <GlassView glassEffectStyle="regular" style={styles.toolbar}>
+      <Host style={{ width: readOnly ? 202 : 92, height: 44 }}><HStack spacing={8} modifiers={[padding({ horizontal: 4 })]}>
+        <Button label="Боковая панель страниц" systemImage="sidebar.left" modifiers={[labelStyle('iconOnly'), buttonStyle(sidebar ? 'bordered' : 'plain'), frame({ width: 36, height: 36 })]} onPress={() => {
+          if (sidebar) setSidebar(false);
+          else { void perform(async () => { setSidebar(true); }); }
+        }} />
+        <Button label={readOnly ? 'Только чтение' : 'Режим редактирования'} systemImage={readOnly ? 'doc.text' : 'pencil.tip'} modifiers={[...(readOnly ? [] : [labelStyle('iconOnly')]), buttonStyle('bordered'), frame({ width: readOnly ? 146 : 36, height: 36 })]} onPress={() => { void perform(async () => { latest.current.onReadOnlyChange?.(!readOnly); }); }} />
+      </HStack></Host>
+      <View style={styles.center}>{!readOnly && toolbar}</View>
+      <Host style={{ width: readOnly ? 92 : 136, height: 44 }}><HStack spacing={8} modifiers={[padding({ horizontal: 4 })]}>
+        {!readOnly && <AddPagePopover currentPattern={page.paper.pattern} paperColor={page.paper.color} onAdd={(position, pattern) => add(position === 'last' ? notebook.pages.length : activePage + (position === 'after' ? 1 : 0), activePage, pattern)} />}
+        <Menu label="Поделиться" systemImage="square.and.arrow.up" modifiers={[labelStyle('iconOnly'), frame({ width: 36, height: 36 })]}>
+          <Button label="Экспортировать эту страницу" onPress={() => actions.export([page.id])} />
+          <Button label="Экспортировать все" onPress={() => actions.export([])} />
+        </Menu>
+        <MorePopover page={page} index={activePage} count={notebook.pages.length} thumbnail={`${packagePath}/thumbnails/${page.id}.png?v=${thumbnailRevision}`} onBookmark={() => actions.bookmark(activePage)} onRotate={degrees => actions.rotate(activePage, degrees)} onTemplate={pattern => update(activePage, current => { const paper = { ...current.paper, pattern }; return { paper, background: { kind: 'paper', paper } }; })} onGo={actions.select} onClear={props.onClearPage || props.onClearPageAt ? () => clear(activePage) : undefined} onRemove={() => actions.remove([page.id])} />
+      </HStack></Host>
+    </GlassView>
+    <View style={styles.content}>
+      {sidebar && <PagesSidebar key={notebook.id} notebook={notebook} activePage={activePage} revision={thumbnailRevision} packagePath={packagePath} onClose={closeSidebar} actions={actions} canClear={!!(props.onClearPage || props.onClearPageAt)} canClearInactive={!!props.onClearPageAt} />}
+      <View style={styles.document}>{children}</View>
+    </View>
+    {exportIds && <ExportSheet title={notebook.title} scope={!exportIds.length ? 'all' : exportIds.length === 1 ? 'page' : 'selected'} onCancel={() => setExportIds(undefined)} onExport={(title, format, background, annotations) => {
+      const ids = exportIds;
+      setExportIds(undefined);
+      void perform(document => (format === 'pdf' ? shareNotebookPDF : shareNotebookImages)(repository.packageDirectory(document.id).uri, { ...document, title }, ids, background, annotations));
+    }} />}
+    {moving && <FolderSheet parentId={notebook.parentId} onCancel={() => setMoving(false)} onSelect={id => perform(async document => {
+      await repository.moveItem(document.id, id);
+      const next = await repository.readNotebook(document.id);
+      if (latest.current.notebook?.id === document.id) latest.current.onNotebookChange?.(next);
+      setMoving(false);
+    })} />}
+    {busy && <Host pointerEvents="none" style={styles.status}><HStack spacing={10} modifiers={[padding({ horizontal: 18, vertical: 12 }), glassEffect({ shape: 'capsule' })]}><ProgressView /><NativeText>Подготовка…</NativeText></HStack></Host>}
   </View>;
 }
-const styles = StyleSheet.create({ root: { flex: 1, backgroundColor: '#EEF0F3' }, tabs: { flexDirection: 'row', paddingTop: 24, backgroundColor: '#E3E8EF' }, tab: { width: 260, borderRightWidth: StyleSheet.hairlineWidth, borderColor: '#C6CDD5' }, activeTab: { backgroundColor: '#F8F9FB', borderTopLeftRadius: 14, borderTopRightRadius: 14 }, toolbar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F5F7FA' }, content: { flex: 1, flexDirection: 'row' }, sidebar: { width: 300, backgroundColor: '#F8F9FA', borderRightWidth: StyleSheet.hairlineWidth, borderColor: '#CCD1D7' }, grid: { padding: 18, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 18 }, preview: { height: 170, backgroundColor: 'white', borderWidth: 2, borderColor: '#E3E5E8' }, selected: { borderColor: '#0087FF' }, status: { position: 'absolute', bottom: 24, alignSelf: 'center', padding: 12, borderRadius: 12, backgroundColor: 'white' } });
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#F4F6F5' },
+  toolbar: { height: 44, marginHorizontal: 4, borderRadius: 22, flexDirection: 'row', alignItems: 'center' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', minWidth: 0 },
+  content: { flex: 1, flexDirection: 'row' },
+  document: { flex: 1, minWidth: 0 },
+  status: { position: 'absolute', bottom: 32, width: 184, height: 48, alignSelf: 'center' },
+});

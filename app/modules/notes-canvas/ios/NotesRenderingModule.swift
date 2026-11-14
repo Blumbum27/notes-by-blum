@@ -137,8 +137,10 @@ private final class NotebookRenderer {
     let folder = directory.appendingPathComponent("thumbnails")
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     var paths: [String] = []
+    let requestedIds = (manifest["thumbnailPageIds"] as? [String]).map { Set($0) }
     for (index, page) in pages.enumerated() {
       guard let id = page["id"] as? String else { continue }
+      if let requestedIds, !requestedIds.contains(id) { continue }
       let format = UIGraphicsImageRendererFormat(); format.scale = 0.4
       var failure: Error?
       let image = UIGraphicsImageRenderer(size: outputSize(page), format: format).image { _ in

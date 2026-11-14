@@ -1,17 +1,38 @@
-import { Button, Form, Host, Section, TextField, Toggle } from '@expo/ui/swift-ui';
+import { Button, Form, Host, HStack, Picker, Section, Spacer, Text, TextField, Toggle, useNativeState } from '@expo/ui/swift-ui';
+import { buttonStyle, font, frame, labelStyle, padding, pickerStyle, tag } from '@expo/ui/swift-ui/modifiers';
 import { useState } from 'react';
-import { Modal, Pressable, Text, View } from 'react-native';
+import { Modal, View } from 'react-native';
 
-export function ExportSheet({ title, onCancel, onExport }: { title: string; onCancel: () => void; onExport: (name: string, format: 'pdf' | 'image', background: boolean, annotations: boolean) => void }) {
-  const [name, setName] = useState(title);
+export function ExportSheet({ title, scope = 'selected', onCancel, onExport }: {
+  title: string;
+  scope?: 'page' | 'all' | 'selected';
+  onCancel: () => void;
+  onExport: (name: string, format: 'pdf' | 'image', background: boolean, annotations: boolean) => void;
+}) {
+  const name = useNativeState(title);
   const [format, setFormat] = useState<'pdf' | 'image'>('pdf');
   const [background, setBackground] = useState(true);
   const [annotations, setAnnotations] = useState(true);
   const [visible, setVisible] = useState(true);
   const [submitted, setSubmitted] = useState(false);
-  return <Modal visible={visible} onDismiss={() => { if (submitted) onExport(name.trim() || title, format, background, annotations); else onCancel(); }} presentationStyle="formSheet" animationType="slide" onRequestClose={() => setVisible(false)}><View style={{ flex: 1, backgroundColor: '#F2F2F7' }}><Text accessibilityRole="header" style={{ textAlign: 'center', fontSize: 20, fontWeight: '600', marginVertical: 24 }}>Экспорт выбранной</Text><View style={{ flexDirection: 'row', gap: 16, paddingHorizontal: 24 }}>{(['pdf', 'image'] as const).map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={value === 'pdf' ? 'PDF' : 'Изображение'} accessibilityState={{ selected: format === value }} onPress={() => setFormat(value)} style={{ flex: 1, minHeight: 110, padding: 16, borderRadius: 22, borderWidth: 1.5, borderColor: format === value ? '#E6492D' : '#C8C8CC', backgroundColor: format === value ? '#F6E3DC' : '#F7F8F8' }}><Text style={{ fontSize: 20, color: format === value ? '#C93820' : '#171717' }}>{value === 'pdf' ? 'PDF' : 'Изображение'}</Text><Text style={{ fontSize: 14, marginTop: 12, color: '#6C6C70' }}>{value === 'pdf' ? 'Один документ' : 'PNG для каждой страницы'}</Text></Pressable>)}</View><Host style={{ flex: 1 }}><Form>
-    <Section title="Имя файла"><TextField placeholder={title} onTextChange={setName} /></Section>
-    <Section title="Параметры"><Toggle label="Включить фон страницы" isOn={background} onIsOnChange={setBackground} /><Toggle label="Включить аннотации" isOn={annotations} onIsOnChange={setAnnotations} /></Section>
-    <Button label="Экспортировать" systemImage="square.and.arrow.up" onPress={() => { setSubmitted(true); setVisible(false); }} /><Button label="Отменить" role="cancel" onPress={() => setVisible(false)} />
-  </Form></Host></View></Modal>;
+  const heading = scope === 'page' ? 'Экспорт страницы' : scope === 'all' ? 'Экспорт всех страниц' : 'Экспорт выбранных страниц';
+  return <Modal visible={visible} onDismiss={() => {
+    if (submitted) onExport(name.get().trim() || title, format, background, annotations);
+    else onCancel();
+  }} presentationStyle="formSheet" animationType="slide" onRequestClose={() => setVisible(false)}>
+    <View style={{ flex: 1, backgroundColor: '#F2F2F7' }}>
+      <Host style={{ height: 68 }}><HStack modifiers={[padding({ horizontal: 16, vertical: 12 })]}>
+        <Button label="Отменить экспорт" systemImage="xmark" modifiers={[labelStyle('iconOnly'), buttonStyle('glass'), frame({ width: 36, height: 36 })]} onPress={() => setVisible(false)} />
+        <Spacer /><Text modifiers={[font({ textStyle: 'headline' })]}>{heading}</Text><Spacer />
+        <Button label="Экспортировать" systemImage="checkmark" modifiers={[labelStyle('iconOnly'), buttonStyle('glassProminent'), frame({ width: 36, height: 36 })]} onPress={() => { setSubmitted(true); setVisible(false); }} />
+      </HStack></Host>
+      <Host style={{ flex: 1 }}><Form>
+        <Section title="Формат"><Picker selection={format} onSelectionChange={value => setFormat(value as typeof format)} modifiers={[pickerStyle('segmented')]}>
+          <Text modifiers={[tag('pdf')]}>PDF</Text><Text modifiers={[tag('image')]}>Изображение</Text>
+        </Picker><Text>{format === 'pdf' ? 'Один PDF-документ' : 'PNG для каждой страницы'}</Text></Section>
+        <Section title="Имя файла"><TextField text={name} placeholder={title} /></Section>
+        <Section title="Параметры"><Toggle label="Включить фон страницы" isOn={background} onIsOnChange={setBackground} /><Toggle label="Включить аннотации" isOn={annotations} onIsOnChange={setAnnotations} /></Section>
+      </Form></Host>
+    </View>
+  </Modal>;
 }

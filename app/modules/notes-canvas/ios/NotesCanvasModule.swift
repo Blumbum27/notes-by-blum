@@ -6,23 +6,28 @@ import PDFKit
 public final class NotesCanvasModule: Module {
   public func definition() -> ModuleDefinition {
     Name("NotesCanvas")
-    AsyncFunction("saveAll") { () -> Bool in
-      var success = true
-      for view in NotesCanvasView.instances.allObjects {
-        view.editingText?.resignFirstResponder()
-        if !view.persist() { success = false }
-      }
-      return success
-    }.runOnQueue(.main)
+    AsyncFunction("saveAll") { () async -> Bool in
+      await NotesCanvasView.saveAll()
+    }
+    AsyncFunction("clearPage") { (path: String) async -> Bool in
+      await NotesCanvasView.clearPage(path)
+    }
     View(NotesCanvasView.self) {
-      Events("onDrawingChange", "onError", "onObjectsChange", "onToolEnd", "onSaved")
+      Events("onDrawingChange", "onError", "onObjectsChange", "onToolEnd", "onTextEditingChange", "onVisibleCenter")
+      Prop("preview") { (view, value: Bool) in view.preview = value; view.updateTool() }
       Prop("objects") { (view, value: [[String: Any]]) in view.setObjects(value) }
       Prop("textFormat") { (view, value: [String: Any]) in view.textFormat = value; view.applyTextFormat() }
       Prop("pageWidth") { (view, value: Double) in view.pageSize.width = value; view.setNeedsLayout() }
       Prop("pageHeight") { (view, value: Double) in view.pageSize.height = value; view.setNeedsLayout() }
       Prop("rotation") { (view, value: Double) in view.rotation = value; view.setNeedsLayout() }
-      Prop("packagePath") { (view, value: String) in view.packageURL = URL(string: value); view.updateBackground(); view.setObjects(view.pageObjects) }
-      Prop("background") { (view, value: [String: Any]) in view.pageBackground = value; view.updateBackground() }
+      Prop("packagePath") { (view, value: String) in
+        guard view.packageURL != URL(string: value) else { return }
+        view.packageURL = URL(string: value); view.updateBackground(); view.setObjects(view.pageObjects)
+      }
+      Prop("background") { (view, value: [String: Any]) in
+        guard !NSDictionary(dictionary: view.pageBackground).isEqual(to: value) else { return }
+        view.pageBackground = value; view.updateBackground()
+      }
       Prop("filePath") { (view, value: String) in view.load(value) }
       Prop("tool") { (view, value: String) in view.toolName = value; view.updateTool() }
       Prop("color") { (view, value: String) in view.inkColor = UIColor(hex: value); view.updateTool() }
@@ -39,9 +44,7 @@ public final class NotesCanvasModule: Module {
         case "undo": view.canvas.undoManager?.undo()
         case "redo": view.canvas.undoManager?.redo()
         case "clear": view.clearDrawing()
-        case "save":
-          view.editingText?.resignFirstResponder()
-          view.onSaved(["id": id, "success": view.persist()])
+        case "viewport": view.reportVisibleCenter()
         default: break
         }
         view.notify()
@@ -52,6 +55,36 @@ public final class NotesCanvasModule: Module {
 
 final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate, UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate {
   static let instances = NSHashTable<NotesCanvasView>.weakObjects()
+  @MainActor static func saveAll() async -> Bool {
+    let views = instances.allObjects.filter { !$0.preview && $0.fileURL != nil }
+    for view in views { view.editingText?.resignFirstResponder() }
+    var success = true
+    for view in views {
+      if view.loading { await withCheckedContinuation { view.loadWaiters.append($0) } }
+      let saved = await withCheckedContinuation { continuation in
+        view.persist { continuation.resume(returning: $0) }
+      }
+      if !saved { success = false }
+    }
+    return success
+  }
+  @MainActor static func clearPage(_ path: String) async -> Bool {
+    guard let url = URL(string: path) else { return false }
+    if let view = instances.allObjects.first(where: { !$0.preview && $0.fileURL == url }) {
+      if view.loading { await withCheckedContinuation { view.loadWaiters.append($0) } }
+      guard !view.loadFailed else { return false }
+      view.clearDrawing(); view.notify()
+      return await withCheckedContinuation { continuation in view.persist { continuation.resume(returning: $0) } }
+    }
+    return await withCheckedContinuation { continuation in
+      drawingQueue.async {
+        do {
+          try PKDrawing().dataRepresentation().write(to: url, options: .atomic)
+          continuation.resume(returning: true)
+        } catch { continuation.resume(returning: false) }
+      }
+    }
+  }
   var rotation = 0.0
   let content = UIView()
   var pageSize = CGSize(width: 595, height: 842)
@@ -62,16 +95,23 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
   var pageBackground: [String: Any] = [:]
   private var saveWork: DispatchWorkItem?
   private var loadFailed = false
+  private static let drawingQueue = DispatchQueue(label: "notes.canvas.drawing", qos: .utility)
+  private var drawingDirty = false
+  private var lastWriteSucceeded = true
+  private var lastHistory: (Bool, Bool)?
   let onDrawingChange = EventDispatcher()
   let onError = EventDispatcher()
   let onObjectsChange = EventDispatcher()
   let onToolEnd = EventDispatcher()
-  let onSaved = EventDispatcher()
-  let objectLayer = UIView()
+  let onTextEditingChange = EventDispatcher()
+  let onVisibleCenter = EventDispatcher()
+  let objectLayer = ObjectLayer()
   var pageObjects: [[String: Any]] = []
   var textFormat: [String: Any] = [:]
   var readOnly = false
   var editingText: UITextView?
+  var draftTextID: String?
+  var preview = false
   var objectViews: [String: UIView] = [:]
   var toolName = "pen"
   var inkColor = UIColor.label
@@ -80,6 +120,7 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
   var lastCommand = -1
   private var fileURL: URL?
   private var loading = false
+  private var loadWaiters: [CheckedContinuation<Void, Never>] = []
 
   required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -122,9 +163,11 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
   }
 
   func updateTool() {
-    canvas.isUserInteractionEnabled = !readOnly && toolName != "text" && toolName != "image"
-    objectLayer.isUserInteractionEnabled = !readOnly && ["text", "image"].contains(toolName)
-    if toolName != "text" { editingText?.resignFirstResponder() }
+    if preview { updatePreview(); return }
+    canvas.isUserInteractionEnabled = !loading && !readOnly && toolName != "text" && toolName != "image"
+    objectLayer.isUserInteractionEnabled = !readOnly && ["text", "image", "lasso"].contains(toolName)
+    objectLayer.capturesBackground = toolName == "text" || editingText != nil
+    if !["text", "lasso"].contains(toolName) { editingText?.resignFirstResponder() }
     if toolName == "eraser" {
       canvas.tool = PKEraserTool(vectorEraser ? .vector : .bitmap, width: inkWidth)
     } else if toolName == "lasso" {
@@ -142,33 +185,90 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
     }
   }
 
+  private func updatePreview() {
+    isUserInteractionEnabled = false
+    paper.isHidden = true
+    let type: PKInk.InkType = toolName == "pencil" ? .pencil : toolName == "marker" ? .marker : toolName == "monoline" ? .monoline : toolName == "fountain" ? .fountainPen : .pen
+    let points = (0...80).map { index in
+      let t = CGFloat(index) / 80
+      let diameter = toolName == "marker" ? max(inkWidth, 12) : toolName == "pencil" ? max(inkWidth, 3) : 3 + sin(t * .pi) * 5
+      return PKStrokePoint(location: CGPoint(x: 22 + t * 256, y: 55 + sin(t * .pi * 2) * 25), timeOffset: TimeInterval(t), size: CGSize(width: diameter, height: diameter), opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }
+    loading = true
+    canvas.drawing = PKDrawing(strokes: [PKStroke(ink: PKInk(type, color: inkColor), path: PKStrokePath(controlPoints: points, creationDate: Date()))])
+    loading = false
+  }
+
   func load(_ path: String) {
+    guard !preview, !path.isEmpty else { return }
     guard let url = URL(string: path), url != fileURL else { return }
     if fileURL != nil { persist() }
     fileURL = url
     loading = true
+    drawingDirty = false
     loadFailed = false
-    do {
-      canvas.drawing = FileManager.default.fileExists(atPath: url.path)
-        ? try PKDrawing(data: Data(contentsOf: url)) : PKDrawing()
-      canvas.undoManager?.removeAllActions()
-    } catch { loadFailed = true; onError(["message": "Не удалось открыть страницу. Закройте документ и попробуйте снова."]) }
-    loading = false
-    notify()
+    updateTool()
+    Self.drawingQueue.async { [self] in
+      do {
+        let drawing = FileManager.default.fileExists(atPath: url.path) ? try PKDrawing(data: Data(contentsOf: url)) : PKDrawing()
+        DispatchQueue.main.async {
+          guard self.fileURL == url else { return }
+          self.canvas.drawing = drawing
+          self.canvas.undoManager?.removeAllActions()
+          self.loading = false; self.updateTool(); self.notify()
+          let waiters = self.loadWaiters; self.loadWaiters.removeAll(); waiters.forEach { $0.resume() }
+        }
+      } catch {
+        DispatchQueue.main.async {
+          guard self.fileURL == url else { return }
+          self.loading = false; self.loadFailed = true; self.updateTool()
+          let waiters = self.loadWaiters; self.loadWaiters.removeAll(); waiters.forEach { $0.resume() }
+          self.onError(["message": "Не удалось открыть страницу. Закройте документ и попробуйте снова."])
+        }
+      }
+    }
   }
 
-  @discardableResult func persist() -> Bool {
-    guard !loading, !loadFailed, let url = fileURL else { return false }
-    do {
-      try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try canvas.drawing.dataRepresentation().write(to: url, options: .atomic)
-      return true
-    } catch { onError(["message": "Не удалось сохранить страницу. Не закрывайте документ и повторите попытку."]); return false }
+  func persist(completion: (@MainActor @Sendable (Bool) -> Void)? = nil) {
+    guard !preview, !loading, !loadFailed, let url = fileURL else { completion?(false); return }
+    saveWork?.cancel()
+    let drawing = canvas.drawing
+    let shouldWrite = drawingDirty
+    drawingDirty = false
+    Self.drawingQueue.async { [self] in
+      do {
+        if shouldWrite {
+          try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+          try drawing.dataRepresentation().write(to: url, options: .atomic)
+        }
+        if shouldWrite { self.lastWriteSucceeded = true }
+        let succeeded = self.lastWriteSucceeded
+        DispatchQueue.main.async { completion?(succeeded) }
+      } catch {
+        self.lastWriteSucceeded = false
+        DispatchQueue.main.async {
+          if self.fileURL == url { self.drawingDirty = true }
+          self.onError(["message": "Не удалось сохранить страницу. Не закрывайте документ и повторите попытку."])
+          completion?(false)
+        }
+      }
+    }
   }
 
   func clearDrawing() {
     replaceDrawing(PKDrawing())
     persist()
+  }
+
+  func reportVisibleCenter() {
+    var visible = objectLayer.bounds
+    var ancestor = superview
+    while let parent = ancestor {
+      if parent.clipsToBounds || parent is UIWindow { visible = visible.intersection(objectLayer.convert(parent.bounds, from: parent)) }
+      ancestor = parent.superview
+    }
+    let center = visible.isNull || visible.isEmpty ? CGPoint(x: pageSize.width / 2, y: pageSize.height / 2) : CGPoint(x: visible.midX, y: visible.midY)
+    onVisibleCenter(["x": center.x, "y": center.y])
   }
 
   private func replaceDrawing(_ drawing: PKDrawing) {
@@ -178,9 +278,14 @@ final class NotesCanvasView: ExpoView, PKCanvasViewDelegate, UITextViewDelegate,
   }
 
   func notify() {
-    onDrawingChange(["canUndo": canvas.undoManager?.canUndo ?? false, "canRedo": canvas.undoManager?.canRedo ?? false])
+    let undo = canvas.undoManager?.canUndo ?? false, redo = canvas.undoManager?.canRedo ?? false
+    guard lastHistory?.0 != undo || lastHistory?.1 != redo else { return }
+    lastHistory = (undo, redo)
+    onDrawingChange(["canUndo": undo, "canRedo": redo])
   }
   func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+    guard !loading else { return }
+    drawingDirty = true
     saveWork?.cancel()
     let work = DispatchWorkItem { [weak self] in self?.persist() }
     saveWork = work

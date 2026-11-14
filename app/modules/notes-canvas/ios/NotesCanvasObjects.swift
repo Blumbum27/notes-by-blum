@@ -1,5 +1,13 @@
 import UIKit
 
+final class ObjectLayer: UIView {
+  var capturesBackground = false
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    let hit = super.hitTest(point, with: event)
+    return hit === self && !capturesBackground ? nil : hit
+  }
+}
+
 extension NotesCanvasView {
   func setObjects(_ objects: [[String: Any]]) {
     guard editingText == nil else { return }
@@ -33,9 +41,10 @@ extension NotesCanvasView {
     guard toolName == "text" else { return }
     let point = gesture.location(in: objectLayer)
     var object = textFormat
-    object.merge(["id": UUID().uuidString, "kind": "text", "text": "", "x": point.x, "y": point.y, "width": min(280, pageSize.width - point.x), "height": 140, "rotation": 0]) { _, new in new }
+    let x = min(point.x, pageSize.width - 40)
+    object.merge(["id": UUID().uuidString, "kind": "text", "text": "", "x": Double(x), "y": Double(point.y), "width": Double(min(280, pageSize.width - x)), "height": 48.0, "rotation": 0.0]) { _, new in new }
     setObjects(pageObjects + [object])
-    if let id = object["id"] as? String, let text = objectViews[id] as? UITextView { text.becomeFirstResponder() }
+    if let id = object["id"] as? String, let text = objectViews[id] as? UITextView { draftTextID = id; text.becomeFirstResponder() }
   }
   func format(_ text: UITextView, _ object: [String: Any]) {
     let size = object["fontSize"] as? Double ?? 24
@@ -56,18 +65,28 @@ extension NotesCanvasView {
     text.textAlignment = object["alignment"] as? String == "center" ? .center : object["alignment"] as? String == "right" ? .right : .left
   }
   func applyTextFormat() { if let text = editingText { format(text, textFormat); textViewDidChange(text) } }
-  func textViewDidBeginEditing(_ textView: UITextView) { editingText = textView; textView.layer.borderColor = UIColor.systemBlue.cgColor; textView.layer.borderWidth = 1 }
+  func textViewDidBeginEditing(_ textView: UITextView) {
+    editingText = textView; objectLayer.capturesBackground = true
+    textView.layer.borderColor = UIColor.systemBlue.cgColor; textView.layer.borderWidth = 1
+    onTextEditingChange(["editing": true])
+  }
   func textViewDidChange(_ textView: UITextView) {
     guard let index = pageObjects.firstIndex(where: { $0["id"] as? String == textView.accessibilityIdentifier }) else { return }
     pageObjects[index].merge(textFormat) { _, new in new }; pageObjects[index]["text"] = textView.text
-    emitObjects()
+    let size = textView.sizeThatFits(CGSize(width: textView.bounds.width, height: .greatestFiniteMagnitude))
+    textView.frame.size.height = max(48, size.height)
+    pageObjects[index]["height"] = Double(textView.frame.height)
   }
   func textViewDidEndEditing(_ textView: UITextView) {
     editingText = nil; textView.layer.borderWidth = 0
-    if textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    let empty = textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    if empty {
       pageObjects.removeAll { $0["id"] as? String == textView.accessibilityIdentifier }; textView.removeFromSuperview()
     }
-    emitObjects()
+    objectLayer.capturesBackground = toolName == "text"
+    onTextEditingChange(["editing": false])
+    if !empty || draftTextID != textView.accessibilityIdentifier { emitObjects() }
+    draftTextID = nil
   }
   @objc func moveObject(_ gesture: UIPanGestureRecognizer) {
     guard let view = gesture.view else { return }
@@ -82,14 +101,25 @@ extension NotesCanvasView {
   }
   func saveGeometry(_ view: UIView) {
     guard let index = pageObjects.firstIndex(where: { $0["id"] as? String == view.accessibilityIdentifier }) else { return }
-    pageObjects[index].merge(["x": view.frame.minX, "y": view.frame.minY, "width": view.frame.width, "height": view.frame.height]) { _, new in new }; emitObjects()
+    pageObjects[index].merge(["x": Double(view.frame.minX), "y": Double(view.frame.minY), "width": Double(view.frame.width), "height": Double(view.frame.height)]) { _, new in new }; emitObjects()
   }
   func emitObjects() { onObjectsChange(["objects": pageObjects]) }
   func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
     guard !readOnly, let view = interaction.view else { return nil }
-    return UIContextMenuConfiguration(actionProvider: { [weak self] _ in UIMenu(children: [UIAction(title: "Удалить", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
-      self?.pageObjects.removeAll { $0["id"] as? String == view.accessibilityIdentifier }; view.removeFromSuperview(); self?.emitObjects()
-    }]) })
+    return UIContextMenuConfiguration(actionProvider: { [weak self] _ in
+      var actions: [UIAction] = []
+      if view is UIImageView {
+        for (title, factor) in [("Увеличить", 1.2), ("Уменьшить", 1 / 1.2)] {
+          actions.append(UIAction(title: title, image: UIImage(systemName: factor > 1 ? "plus.magnifyingglass" : "minus.magnifyingglass")) { _ in
+            view.bounds.size.width *= factor; view.bounds.size.height *= factor; self?.saveGeometry(view)
+          })
+        }
+      }
+      actions.append(UIAction(title: "Удалить", image: UIImage(systemName: "trash"), attributes: .destructive) { _ in
+        self?.pageObjects.removeAll { $0["id"] as? String == view.accessibilityIdentifier }; view.removeFromSuperview(); self?.emitObjects()
+      })
+      return UIMenu(children: actions)
+    })
   }
 }
 
