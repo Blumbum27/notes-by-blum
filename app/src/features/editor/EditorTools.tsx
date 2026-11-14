@@ -1,5 +1,5 @@
-import { Button, Circle, ColorPicker, Divider, Host, HStack, Image, Popover, RNHostView, RoundedRectangle, ScrollView, Slider, Spacer, Text, Toggle, VStack, ZStack } from '@expo/ui/swift-ui';
-import { accessibilityLabel, background, buttonStyle, disabled, font, foregroundStyle, frame, glassEffect, multilineTextAlignment, offset, padding, strokeBorder } from '@expo/ui/swift-ui/modifiers';
+import { Button, Capsule, Circle, ColorPicker, Divider, Host, HStack, Image, Popover, RNHostView, RoundedRectangle, ScrollView, Slider, Spacer, Text, Toggle, VStack, ZStack } from '@expo/ui/swift-ui';
+import { accessibilityLabel, background, buttonStyle, contentShape, disabled, font, foregroundStyle, frame, glassEffect, multilineTextAlignment, offset, padding, shapes, strokeBorder } from '@expo/ui/swift-ui/modifiers';
 import type { SFSymbol } from 'expo-symbols';
 import { forwardRef, Fragment, memo, useImperativeHandle, useState, type ReactElement } from 'react';
 import { NotesCanvas, type CanvasTool, type PenOptions, type ShapeKind } from '../../../modules/notes-canvas';
@@ -43,6 +43,11 @@ const tint = { selected: '#E8EEF8', thickness: '#E9ECEC' };
 
 type Props = { state: EditorToolState; onChange: (state: EditorToolState) => void };
 const plain = buttonStyle('plain');
+// Нажатие засчитывается по всей рамке кнопки, а не только по видимому значку.
+const hit = contentShape(shapes.rectangle());
+// Шесть цветов и «+» — ширина участка цветов во всех панелях с палитрой.
+const colorSlot = 36 * 7;
+const lightColors = new Set(['#FFFFFF', '#FCFCFC', '#F1F2F2', '#FCFF85', '#FFFF00']);
 const glyph = (symbol: SFSymbol, size: number, color = ink, weight: 'regular' | 'medium' | 'semibold' = 'regular') =>
   <Image systemName={symbol} size={size} color={color} modifiers={[font({ size, weight })]} />;
 
@@ -80,7 +85,7 @@ export const EditorTools = memo(function EditorTools({ state, onChange, onRepeat
   };
   const button = (item: typeof toolbarItems[number]) => {
     const selected = current === item.key;
-    return <Button key={item.key} onPress={() => choose(item.key)} modifiers={[plain, frame({ width: 42, height: 44 }), accessibilityLabel(selected ? `${item.label}, выбрано` : item.label)]}>
+    return <Button key={item.key} onPress={() => choose(item.key)} modifiers={[plain, frame({ width: 42, height: 44 }), hit, accessibilityLabel(selected ? `${item.label}, выбрано` : item.label)]}>
       <ZStack modifiers={[frame({ width: 36, height: 34 }), ...(selected ? [background(item.wash, { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : [])]}>
         {glyph(item.symbol, 18, item.accent, selected ? 'semibold' : 'regular')}
         {item.key === 'writing' && selected && <Circle modifiers={[foregroundStyle(state.color === 'stars' ? '#1E2A4A' : state.color), frame({ width: 7, height: 7 }), strokeBorder({ shape: 'circle', color: '#FFFFFF', style: { lineWidth: 1 } }), offset({ x: 10, y: 9 })]} />}
@@ -92,7 +97,7 @@ export const EditorTools = memo(function EditorTools({ state, onChange, onRepeat
     <Divider modifiers={[frame({ height: 20 }), padding({ horizontal: 6 })]} />
     {toolbarItems.slice(1).map(button)}
     <Divider modifiers={[frame({ height: 20 }), padding({ horizontal: 6 })]} />
-    <Button onPress={() => onRulerChange(!ruler)} modifiers={[plain, frame({ width: 42, height: 44 }), accessibilityLabel(ruler ? 'Линейка, показана' : 'Линейка')]}>
+    <Button onPress={() => onRulerChange(!ruler)} modifiers={[plain, frame({ width: 42, height: 44 }), hit, accessibilityLabel(ruler ? 'Линейка, показана' : 'Линейка')]}>
       <ZStack modifiers={[frame({ width: 36, height: 34 }), ...(ruler ? [background('#ECEDEF', { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : [])]}>{glyph('ruler', 18, '#5E6463', ruler ? 'semibold' : 'regular')}</ZStack>
     </Button>
   </HStack></Host>;
@@ -110,16 +115,20 @@ export function EditorToolPanel({ state, onChange, onClear, availableWidth, eras
   const divider = <Divider modifiers={[frame({ height: 22 }), padding({ horizontal: 6 })]} />;
   const capsule = (width: number, content: ReactElement) => {
     const panelWidth = Math.min(width, availableWidth);
-    return <Host style={{ height: 46, width: panelWidth }}><HStack spacing={0} modifiers={[padding({ horizontal: 8 }), frame({ width: panelWidth, height: 46 }), glassEffect({ shape: 'capsule' })]}>{content}</HStack></Host>;
+    return <Host style={{ height: 46, width: panelWidth }}><ZStack alignment="leading">
+      <RoundedRectangle cornerRadius={23} modifiers={[foregroundStyle('#FFFFFF00'), frame({ width: panelWidth, height: 46 }), glassEffect({ shape: 'capsule' })]} />
+      <HStack spacing={0} modifiers={[padding({ horizontal: 8 }), frame({ width: panelWidth, height: 46, alignment: 'leading' })]}>{content}</HStack>
+    </ZStack></Host>;
   };
 
   const thicknessRow = (group: WritingGroup | 'shape') => thicknesses[group].map((mm, index) => {
     const selected = state.thicknessIndex === index;
+    const markColor = selected ? '#151A19' : '#3A403F';
     const shape = group === 'marker'
-      ? <Circle modifiers={[foregroundStyle('#4C5251'), frame({ width: [8, 13, 18][index], height: [8, 13, 18][index] })]} />
-      : group === 'tape' ? <RoundedRectangle cornerRadius={1.5} modifiers={[foregroundStyle('#4C5251'), frame({ width: 18, height: [4, 7, 11][index] })]} />
-        : <RoundedRectangle cornerRadius={1} modifiers={[foregroundStyle('#4C5251'), frame({ width: 18, height: [1.5, 2.5, 4][index] })]} />;
-    return <Button key={index} onPress={() => update({ width: mmToPoints(mm), thicknessIndex: index })} modifiers={[plain, frame({ width: 40, height: 34 }), ...(selected ? [background(tint.thickness, { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : []), accessibilityLabel(`Толщина ${mm.toLocaleString('ru')} мм${selected ? ', выбрана' : ''}`)]}>{shape}</Button>;
+      ? <Circle modifiers={[foregroundStyle(markColor), frame({ width: [8, 13, 18][index], height: [8, 13, 18][index] })]} />
+      : group === 'tape' ? <RoundedRectangle cornerRadius={2} modifiers={[foregroundStyle(markColor), frame({ width: 20, height: [4, 7, 11][index] })]} />
+        : <Capsule modifiers={[foregroundStyle(markColor), frame({ width: 20, height: [2, 3, 4.5][index] })]} />;
+    return <Button key={index} onPress={() => update({ width: mmToPoints(mm), thicknessIndex: index })} modifiers={[plain, frame({ width: 40, height: 34 }), ...(selected ? [background(tint.thickness, { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : []), frame({ height: 46 }), hit, accessibilityLabel(`Толщина ${mm.toLocaleString('ru')} мм${selected ? ', выбрана' : ''}`)]}>{shape}</Button>;
   });
 
   const palette = (onPick: (color: string) => void, selectedColor?: string) => <VStack spacing={6}>
@@ -128,13 +137,14 @@ export function EditorToolPanel({ state, onChange, onClear, availableWidth, eras
     </Button>)}</HStack>)}
   </VStack>;
 
-  // fixed — ширина остальной части капсулы: при нехватке места ряд цветов прокручивается внутри неё, а не обрезается краем.
-  const colorRow = (colors: string[], editable: boolean, fixed: number) => <ScrollView axes="horizontal" showsIndicators={false} modifiers={[frame({ width: Math.max(108, Math.min(36 * (colors.length + (editable ? 1 : 0)), availableWidth - fixed)), height: 46 })]}><HStack spacing={0}>
+  // colorSlot — постоянная ширина участка цветов, чтобы панель не меняла размер при смене инструмента; fixed — остальная часть капсулы.
+  // При нехватке места ряд цветов прокручивается внутри участка, а не обрезается краем.
+  const colorRow = (colors: string[], editable: boolean, fixed: number) => <ScrollView axes="horizontal" showsIndicators={false} modifiers={[frame({ width: Math.max(108, Math.min(colorSlot, availableWidth - fixed)), height: 46, alignment: 'leading' })]}><HStack spacing={0}>
     {colors.map((color, index) => {
       const selected = state.colorIndex === index;
-      const swatch = <Button onPress={() => selected && editable ? setOpen(`color-${index}`) : update({ color, colorIndex: index })} modifiers={[plain, frame({ width: 36, height: 46 }), accessibilityLabel(`${color === 'stars' ? 'Лента со звёздами' : `Цвет ${index + 1}`}${selected ? ', выбран' : ''}`)]}>
-        <ZStack modifiers={[frame({ width: 30, height: 30 }), ...(selected ? [strokeBorder({ shape: 'circle', color: '#9AA09F', style: { lineWidth: 1.5 } })] : [])]}>
-          <Circle modifiers={[foregroundStyle(color === 'stars' ? '#1E2A4A' : color), frame({ width: 22, height: 22 }), strokeBorder({ shape: 'circle', color: '#C9CDCC', style: { lineWidth: color.toUpperCase() === '#FFFFFF' ? 1 : 0.5 } })]} />
+      const swatch = <Button onPress={() => selected && editable ? setOpen(`color-${index}`) : update({ color, colorIndex: index })} modifiers={[plain, frame({ width: 36, height: 46 }), hit, accessibilityLabel(`${color === 'stars' ? 'Лента со звёздами' : `Цвет ${index + 1}`}${selected ? ', выбран' : ''}`)]}>
+        <ZStack modifiers={[frame({ width: 32, height: 32 }), ...(selected ? [strokeBorder({ shape: 'circle', color: color === 'stars' ? '#1E2A4A' : lightColors.has(color.toUpperCase()) ? '#8E9493' : color, style: { lineWidth: 2 } })] : [])]}>
+          <Circle modifiers={[foregroundStyle(color === 'stars' ? '#1E2A4A' : color), frame({ width: selected ? 22 : 26, height: selected ? 22 : 26 }), ...(lightColors.has(color.toUpperCase()) ? [strokeBorder({ shape: 'circle', color: '#B8BEBD', style: { lineWidth: 1 } })] : [])]} />
           {color === 'stars' && glyph('star.fill', 9, '#FFD43B')}
         </ZStack>
       </Button>;
@@ -147,7 +157,7 @@ export function EditorToolPanel({ state, onChange, onClear, availableWidth, eras
         {colors.length > 1 && <Button label="Удалить цвет" role="destructive" onPress={() => { const next = colors.filter((_, i) => i !== index); const nextIndex = Math.min(index, next.length - 1); setOpen(undefined); update({ colors: next, colorIndex: nextIndex, color: next[nextIndex] }); }} />}
       </VStack>);
     })}
-    {editable && popup('add-color', <Button onPress={() => setOpen('add-color')} modifiers={[plain, frame({ width: 36, height: 46 }), accessibilityLabel('Добавить цвет')]}>{glyph('plus.circle', 22, '#8E9493')}</Button>,
+    {editable && popup('add-color', <Button onPress={() => setOpen('add-color')} modifiers={[plain, frame({ width: 36, height: 46 }), hit, accessibilityLabel('Добавить цвет')]}>{glyph('plus.circle', 22, '#8E9493')}</Button>,
       <VStack spacing={16} modifiers={[padding({ all: 18 }), frame({ width: 330 })]}>
         {title('Новый цвет')}
         {palette(value => { const next = [...colors, value]; setOpen(undefined); update({ colors: next, color: value, colorIndex: next.length - 1 }); })}
@@ -180,10 +190,10 @@ export function EditorToolPanel({ state, onChange, onClear, availableWidth, eras
     </VStack>;
     const colors = state.colors ?? defaultPresets[group].colors!;
     const fixed = 5 * 44 + 12 + 3 * 40 + 12 + 16;
-    return capsule(fixed + 36 * (colors.length + (group === 'tape' ? 0 : 1)), <>
+    return capsule(fixed + colorSlot, <>
       {types.map(type => {
         const selected = group === type.group;
-        return popup(type.group, <Button onPress={() => selected ? setOpen(type.group) : update({ tool: type.group === 'pen' ? 'fountain' : type.group })} modifiers={[plain, frame({ width: 44, height: 34 }), ...(selected ? [background(tint.selected, { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : []), accessibilityLabel(selected ? `${type.label}, выбрано. Настройки` : type.label)]}>
+        return popup(type.group, <Button onPress={() => selected ? setOpen(type.group) : update({ tool: type.group === 'pen' ? 'fountain' : type.group })} modifiers={[plain, frame({ width: 44, height: 34 }), ...(selected ? [background(tint.selected, { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : []), frame({ height: 46 }), hit, accessibilityLabel(selected ? `${type.label}, выбрано. Настройки` : type.label)]}>
           <HStack spacing={1}>{glyph(type.symbol, 17, selected ? '#1F6FE5' : ink, selected ? 'medium' : 'regular')}{selected && glyph('chevron.down', 8, '#1F6FE5', 'semibold')}</HStack>
         </Button>, settings(type.group));
       })}
@@ -199,25 +209,25 @@ export function EditorToolPanel({ state, onChange, onClear, availableWidth, eras
     ];
     const kindButton = (item: typeof kinds[number]) => {
       const selected = (state.shapeKind ?? 'freeform') === item.kind;
-      return <Button key={item.kind} onPress={() => update({ shapeKind: item.kind })} modifiers={[plain, frame({ width: 40, height: 34 }), ...(selected ? [background('#FEF0DF', { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : []), accessibilityLabel(selected ? `${item.label}, выбрано` : item.label)]}>{glyph(item.symbol, 17, selected ? '#D96F00' : ink, selected ? 'medium' : 'regular')}</Button>;
+      return <Button key={item.kind} onPress={() => update({ shapeKind: item.kind })} modifiers={[plain, frame({ width: 40, height: 34 }), ...(selected ? [background('#FEF0DF', { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : []), frame({ height: 46 }), hit, accessibilityLabel(selected ? `${item.label}, выбрано` : item.label)]}>{glyph(item.symbol, 17, selected ? '#D96F00' : ink, selected ? 'medium' : 'regular')}</Button>;
     };
     const colors = state.colors ?? defaultPresets.shape.colors!;
     const fixed = 8 * 40 + 24 + 3 * 40 + 12 + 16;
-    return capsule(fixed + 36 * (colors.length + 1), <>
+    return capsule(fixed + colorSlot, <>
       {kinds.slice(0, 3).map(kindButton)}{divider}{kinds.slice(3).map(kindButton)}{divider}{thicknessRow('shape')}{divider}{colorRow(colors, true, fixed)}
     </>);
   }
 
   if (state.tool === 'sticky') return capsule(stickyColors.length * 40 + 16, <>{stickyColors.map((color, index) => {
     const selected = state.colorIndex === index;
-    return <Button key={color} onPress={() => update({ color, colorIndex: index })} modifiers={[plain, frame({ width: 40, height: 46 }), accessibilityLabel(`Цвет заметки ${index + 1}${selected ? ', выбран' : ''}`)]}>
+    return <Button key={color} onPress={() => update({ color, colorIndex: index })} modifiers={[plain, frame({ width: 40, height: 46 }), hit, accessibilityLabel(`Цвет заметки ${index + 1}${selected ? ', выбран' : ''}`)]}>
       <ZStack modifiers={[frame({ width: 30, height: 30 }), ...(selected ? [strokeBorder({ shape: 'roundedRectangle', cornerRadius: 9, color: '#9AA09F', style: { lineWidth: 1.5 } })] : [])]}><RoundedRectangle cornerRadius={5} modifiers={[foregroundStyle(color), frame({ width: 22, height: 22 }), strokeBorder({ shape: 'roundedRectangle', cornerRadius: 5, color: '#C9CDCC', style: { lineWidth: color === '#FFFFFF' ? 1 : 0.5 } })]} /></ZStack>
     </Button>;
   })}</>);
 
   if (state.tool === 'laser') return capsule(2 * 104 + 16, <>{(['dot', 'line'] as const).map(mode => {
     const selected = (state.laserMode ?? 'line') === mode;
-    return <Button key={mode} onPress={() => update({ laserMode: mode })} modifiers={[plain, frame({ width: 104, height: 34 }), ...(selected ? [background('#FDE6E4', { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : []), accessibilityLabel(mode === 'dot' ? 'Точка' : 'Линия')]}>
+    return <Button key={mode} onPress={() => update({ laserMode: mode })} modifiers={[plain, frame({ width: 104, height: 34 }), ...(selected ? [background('#FDE6E4', { shape: 'roundedRectangle' as const, cornerRadius: 10 })] : []), frame({ height: 46 }), hit, accessibilityLabel(mode === 'dot' ? 'Точка' : 'Линия')]}>
       <HStack spacing={6}>{glyph(mode === 'dot' ? 'circle.fill' : 'scribble', mode === 'dot' ? 10 : 16, selected ? '#E8352B' : ink)}<Text modifiers={[font({ size: 15, weight: selected ? 'medium' : 'regular' }), foregroundStyle(selected ? '#E8352B' : ink)]}>{mode === 'dot' ? 'Точка' : 'Линия'}</Text></HStack>
     </Button>;
   })}</>);
@@ -226,15 +236,15 @@ export function EditorToolPanel({ state, onChange, onClear, availableWidth, eras
   const eraserWidths = state.eraserType === 'standard' ? [20, 40, 80] : [5, 20, 40];
   const eraserNames = { precise: 'Точный', standard: 'Стандартный', stroke: 'Для штрихов' };
   return capsule(150 + 12 + 40 + 12 + 3 * 46 + 16, <>
-    {popup('eraser', <Button onPress={() => setOpen('eraser')} modifiers={[plain, frame({ width: 150, height: 34 }), background('#EEF0F0', { shape: 'roundedRectangle', cornerRadius: 10 }), accessibilityLabel('Тип ластика')]}><HStack spacing={6}>{glyph('eraser', 16, '#E5396B')}<Text modifiers={[font({ size: 15 }), foregroundStyle(ink)]}>{eraserNames[state.eraserType ?? 'precise']}</Text>{glyph('chevron.down', 9, '#6B7170', 'semibold')}</HStack></Button>,
+    {popup('eraser', <Button onPress={() => setOpen('eraser')} modifiers={[plain, frame({ width: 150, height: 34 }), background('#EEF0F0', { shape: 'roundedRectangle', cornerRadius: 10 }), frame({ height: 46 }), hit, accessibilityLabel('Тип ластика')]}><HStack spacing={6}>{glyph('eraser', 16, '#E5396B')}<Text modifiers={[font({ size: 15 }), foregroundStyle(ink)]}>{eraserNames[state.eraserType ?? 'precise']}</Text>{glyph('chevron.down', 9, '#6B7170', 'semibold')}</HStack></Button>,
       <VStack spacing={16} modifiers={[padding({ all: 18 }), frame({ width: 340 })]}>{title('Тип ластика')}<HStack spacing={8}>{(['precise', 'standard', 'stroke'] as const).map((type, i) => <ToolTile key={type} onPress={() => { update({ eraserType: type, eraserMode: type === 'stroke' ? 'vector' : 'bitmap', width: (type === 'standard' ? [20, 40, 80] : [5, 20, 40])[state.thicknessIndex ?? 1] }); setOpen(undefined); }} selected={(state.eraserType ?? 'precise') === type} symbol={i === 2 ? 'eraser.line.dashed' : 'eraser'} label={['Точный ластик', 'Стандартный ластик', 'Ластик для штрихов'][i]} />)}</HStack>{note(state.eraserType === 'stroke' ? 'Удаляет штрих целиком одним касанием.' : state.eraserType === 'standard' ? 'Стирает широкой областью.' : 'Точно стирает мелкие детали.')}</VStack>)}
     {divider}
-    {popup('settings', <Button onPress={() => setOpen('settings')} modifiers={[plain, frame({ width: 40, height: 34 }), accessibilityLabel('Параметры ластика')]}>{glyph('slider.horizontal.3', 17)}</Button>,
+    {popup('settings', <Button onPress={() => setOpen('settings')} modifiers={[plain, frame({ width: 40, height: 34 }), frame({ height: 46 }), hit, accessibilityLabel('Параметры ластика')]}>{glyph('slider.horizontal.3', 17)}</Button>,
       <VStack spacing={18} alignment="leading" modifiers={[padding({ all: 18 }), frame({ width: 340 })]}>{title('Дополнительные настройки')}<Toggle label="Автоперекл. на предыд. инструмент" isOn={eraserAutoReturn} onIsOnChange={onEraserAutoReturnChange} /><Divider /><Button label="Очистить страницу" systemImage="trash" role="destructive" onPress={() => { setOpen(undefined); onClear(); }} /></VStack>)}
     {divider}
     {eraserWidths.map((width, index) => {
       const selected = state.thicknessIndex === index;
-      return <Button key={index} onPress={() => update({ width, thicknessIndex: index })} modifiers={[plain, frame({ width: 46, height: 46 }), accessibilityLabel(`${['Маленький', 'Средний', 'Большой'][index]} ластик${selected ? ', выбран' : ''}`)]}><Circle modifiers={[foregroundStyle('#F7F8F8'), frame({ width: [10, 18, 26][index], height: [10, 18, 26][index] }), strokeBorder({ shape: 'circle', color: selected ? '#1F6FE5' : '#A5AAA9', style: { lineWidth: selected ? 2 : 1 } })]} /></Button>;
+      return <Button key={index} onPress={() => update({ width, thicknessIndex: index })} modifiers={[plain, frame({ width: 46, height: 46 }), hit, accessibilityLabel(`${['Маленький', 'Средний', 'Большой'][index]} ластик${selected ? ', выбран' : ''}`)]}><Circle modifiers={[foregroundStyle('#F7F8F8'), frame({ width: [10, 18, 26][index], height: [10, 18, 26][index] }), strokeBorder({ shape: 'circle', color: selected ? '#1F6FE5' : '#A5AAA9', style: { lineWidth: selected ? 2 : 1 } })]} /></Button>;
     })}
   </>);
 }
@@ -243,7 +253,7 @@ export type HistoryHandle = { update: (history: { canUndo: boolean; canRedo: boo
 export const EditorHistory = forwardRef<HistoryHandle, { onUndo: () => void; onRedo: () => void }>(function EditorHistory({ onUndo, onRedo }, ref) {
   const [history, setHistory] = useState({ canUndo: false, canRedo: false });
   useImperativeHandle(ref, () => ({ update: next => setHistory(current => current.canUndo === next.canUndo && current.canRedo === next.canRedo ? current : next) }), []);
-  const item = (label: string, symbol: SFSymbol, enabled: boolean, onPress: () => void) => <Button onPress={onPress} modifiers={[plain, frame({ width: 38, height: 38 }), disabled(!enabled), accessibilityLabel(label)]}>{glyph(symbol, 16, enabled ? ink : '#B5BAB9', 'medium')}</Button>;
+  const item = (label: string, symbol: SFSymbol, enabled: boolean, onPress: () => void) => <Button onPress={onPress} modifiers={[plain, frame({ width: 38, height: 38 }), hit, disabled(!enabled), accessibilityLabel(label)]}>{glyph(symbol, 16, enabled ? ink : '#B5BAB9', 'medium')}</Button>;
   return <Host style={{ width: 88, height: 46 }}><HStack spacing={0} modifiers={[padding({ horizontal: 6 }), frame({ height: 46 }), glassEffect({ shape: 'capsule' })]}>
     {item('Отменить', 'arrow.uturn.backward', history.canUndo, onUndo)}{item('Повторить', 'arrow.uturn.forward', history.canRedo, onRedo)}
   </HStack></Host>;
