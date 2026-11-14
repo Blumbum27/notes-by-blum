@@ -5,3 +5,4 @@ app/ios/
 app/android/
 app/.expo/
 *.log
+.worktrees/
